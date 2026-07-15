@@ -6,10 +6,11 @@ The project is designed as a university final project using Kotlin, Jetpack Comp
 
 ## Group Members
 
-- Sayed Jihad ElSayed
-- Team Member 2
-- Team Member 3
-- Team Member 4
+-  Jihad ElSayed
+- Julio Gutierrez
+- Sahar Alqaderi
+- Cameron
+- Narem
 
 Replace the placeholder names before submission.
 
@@ -526,14 +527,14 @@ Do not build this backend until the local Android MVP is complete.
 
 ## Team Work Division
 
-### Member 1: Navigation and Login
+### Cameron: Navigation and Login
 
 - Application navigation
 - Login screen
 - Local user creation
 - Login validation
 
-### Member 2: Chat Feature
+### Julio: Chat Feature
 
 - Chat UI
 - Message bubbles
@@ -541,7 +542,7 @@ Do not build this backend until the local Android MVP is complete.
 - Image selection
 - Simulated AI responses
 
-### Member 3: Data and Background Work
+### Jihad And Sahar: Data and Background Work
 
 - Room entities
 - DAOs
@@ -549,7 +550,7 @@ Do not build this backend until the local Android MVP is complete.
 - Repositories
 - WorkManager worker
 
-### Member 4: History, Profile, and Settings
+### Narem: History, Profile, and Settings
 
 - Chat History screen
 - Profile screen
