@@ -2,33 +2,50 @@
 
 SmartChat is an Android AI-assistant application that allows users to create conversations, send messages, upload images, manage chat history, and customize application settings.
 
-The project is designed as a university final project using Kotlin, Jetpack Compose, Room, WorkManager, and MVVM architecture.
+The project is being developed as a university final project using a separate Android application and Node.js backend.
 
 ## Group Members
 
--  Jihad ElSayed
+- Jihad ElSayed
 - Julio Gutierrez
 - Sahar Alqaderi
 - Cameron
 - Narem
 
-Replace the placeholder names before submission.
+---
+
+## Project Status
+
+The following backend foundation is working:
+
+- Node.js and TypeScript backend
+- Express REST API
+- PostgreSQL 17 running in Docker
+- Prisma ORM
+- Initial Prisma migration
+- User registration
+- JWT access-token generation
+- Health endpoint
+- Database tables for users, conversations, messages, and attachments
+
+The initial registration endpoint has been tested successfully against the Docker PostgreSQL database.
 
 ---
 
 ## Project Goals
 
-The application provides a simple interface where users can:
+SmartChat provides a simple interface where users can:
 
-- Log in locally
+- Register and log in
 - Create and manage conversations
 - Send messages to an AI assistant
 - Upload images
 - View previous conversations
 - Edit profile information
 - Change application settings
-- Store conversations locally
-- Perform background database maintenance
+- Store conversations locally using Room
+- Store synchronized application data in PostgreSQL
+- Perform background database and synchronization work
 
 ---
 
@@ -37,33 +54,45 @@ The application provides a simple interface where users can:
 SmartChat satisfies the final-project requirements through:
 
 - More than three screens
-- A Room database
+- Room local database
+- PostgreSQL server database
+- In-app networking
 - WorkManager background work
-- Descriptive Kotlin naming
+- Descriptive Kotlin and TypeScript naming
 - Comments where logic is not self-explanatory
 - A readable package-by-feature structure
 
 ---
 
-## Recommended MVP
+## Minimum Viable Product
 
-The first version should include:
+The MVP includes:
 
-1. Login screen
-2. Chat screen
+1. Registration and login
+2. AI chat screen
 3. Chat History screen
 4. Profile screen
 5. Settings screen
-6. Room database
-7. WorkManager background task
-8. Simulated AI responses or a small predefined response service
-9. Image selection from the device
+6. Room local database
+7. PostgreSQL backend database
+8. WorkManager background task
+9. Mock AI responses
+10. Image selection from the device
+11. REST API communication between Android and Node.js
+12. JWT authentication
 
-Do not begin with voice chat, image generation, multiple AI providers, calendar integration, or cloud synchronization. Those features are outside the MVP and will waste development time before the required features work.
+The following features are outside the MVP:
+
+- Voice chat
+- AI image generation
+- Multiple AI providers
+- Calendar integration
+- Cloud file storage
+- Advanced offline synchronization
 
 ---
 
-## Recommended Technology Stack
+## Technology Stack
 
 ### Android Application
 
@@ -77,586 +106,605 @@ Do not begin with voice chat, image generation, multiple AI providers, calendar 
 - Room
 - WorkManager
 - DataStore Preferences
-- Coil for image display
-- Hilt for dependency injection, optional
+- Retrofit
+- Coil
+- Hilt, optional
 
-### Optional Backend
+### Backend
 
-A backend is not required for the MVP because the Room database already satisfies the course database requirement.
-
-A backend should only be added when the application needs:
-
-- Real AI responses
-- Cloud synchronization
-- Multi-device accounts
-- Remote authentication
-- Shared file storage
-- Push notifications
-
-For a future production version, use:
-
-- Django REST Framework
-- PostgreSQL
-- Token-based authentication
-- Object storage for attachments
-- An AI-provider gateway
-
-Never place a paid AI provider API key directly inside the Android application. Mobile applications can be inspected, and embedded keys can be stolen. Real AI requests should go through a backend.
+- Node.js
+- TypeScript
+- Express
+- Prisma ORM
+- PostgreSQL 17
+- JWT authentication
+- bcrypt password hashing
+- Zod validation
+- Docker Compose for PostgreSQL
 
 ---
 
-## Database Decision
-
-### MVP Database: Room
-
-Room should be the primary database for the university project.
-
-Reasons:
-
-- It works locally without a server.
-- It satisfies the database requirement.
-- It is officially designed for structured Android data.
-- It works well with Kotlin coroutines and Flow.
-- It is easier to test and demonstrate.
-- It keeps the MVP small.
-
-### Settings Storage: DataStore
-
-Use DataStore for small user preferences such as:
-
-- Dark mode
-- Notification preference
-- Selected language
-- Selected AI model name
-- First-launch status
-
-Do not store conversations in DataStore. DataStore is for preferences, not relational application data.
-
-### Future Server Database: PostgreSQL
-
-If a backend is added later, PostgreSQL should store server-side users, conversations, messages, attachments, and synchronization metadata.
-
----
-
-## Data Model
-
-### UserEntity
-
-```kotlin
-@Entity(tableName = "users")
-data class UserEntity(
-    @PrimaryKey val userId: String,
-    val displayName: String,
-    val emailAddress: String,
-    val profileImageUri: String?
-)
-```
-
-### ConversationEntity
-
-```kotlin
-@Entity(tableName = "conversations")
-data class ConversationEntity(
-    @PrimaryKey val conversationId: String,
-    val userId: String,
-    val title: String,
-    val createdAt: Long,
-    val updatedAt: Long
-)
-```
-
-### MessageEntity
-
-```kotlin
-@Entity(
-    tableName = "messages",
-    foreignKeys = [
-        ForeignKey(
-            entity = ConversationEntity::class,
-            parentColumns = ["conversationId"],
-            childColumns = ["conversationId"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
-    indices = [Index("conversationId")]
-)
-data class MessageEntity(
-    @PrimaryKey val messageId: String,
-    val conversationId: String,
-    val senderType: String,
-    val messageText: String,
-    val createdAt: Long
-)
-```
-
-### AttachmentEntity
-
-```kotlin
-@Entity(
-    tableName = "attachments",
-    foreignKeys = [
-        ForeignKey(
-            entity = MessageEntity::class,
-            parentColumns = ["messageId"],
-            childColumns = ["messageId"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
-    indices = [Index("messageId")]
-)
-data class AttachmentEntity(
-    @PrimaryKey val attachmentId: String,
-    val messageId: String,
-    val fileName: String,
-    val mimeType: String,
-    val localUri: String,
-    val createdAt: Long
-)
-```
-
-### Relationships
-
-- One user can have many conversations.
-- One conversation can have many messages.
-- One message can have multiple attachments.
-
----
-
-## Application Architecture
-
-Use MVVM with a repository layer.
-
-```text
-Compose Screen
-      |
-      v
-ViewModel
-      |
-      v
-Repository
-      |
-      +------------------+
-      |                  |
-      v                  v
-Room Database      Optional API Service
-```
-
-### Responsibilities
-
-#### Compose Screens
-
-- Display UI
-- Collect ViewModel state
-- Send user actions to the ViewModel
-- Avoid database and networking logic
-
-#### ViewModels
-
-- Hold screen state
-- Validate user actions
-- Call repositories
-- Expose StateFlow to Compose
-
-#### Repositories
-
-- Decide where data comes from
-- Read and write Room data
-- Later communicate with the backend
-- Keep ViewModels independent from database implementation
-
-#### Room DAOs
-
-- Contain database queries
-- Return Flow where live updates are useful
-- Avoid business logic
-
-#### Workers
-
-- Run maintenance tasks
-- Remove expired temporary files
-- Retry unsynchronized records in a future cloud version
-
----
-
-## Recommended Project Structure
-
-Use one Android application module and organize code by feature.
+## Project Structure
 
 ```text
 SmartChat/
 ├── README.md
-├── settings.gradle.kts
-├── build.gradle.kts
-├── gradle.properties
-├── app/
+├── docs/
+│   ├── design-document.md
+│   ├── architecture.md
+│   ├── database-diagram.md
+│   ├── api-documentation.md
+│   ├── team-responsibilities.md
+│   └── screen-sketches/
+│       ├── login-screen.png
+│       ├── chat-screen.png
+│       ├── history-screen.png
+│       ├── profile-screen.png
+│       └── settings-screen.png
+│
+├── android/
+│   ├── README.md
+│   ├── settings.gradle.kts
 │   ├── build.gradle.kts
-│   └── src/
-│       ├── main/
-│       │   ├── AndroidManifest.xml
-│       │   ├── java/com/example/smartchat/
-│       │   │   ├── SmartChatApplication.kt
-│       │   │   ├── MainActivity.kt
-│       │   │   │
-│       │   │   ├── navigation/
-│       │   │   │   ├── AppDestination.kt
-│       │   │   │   └── SmartChatNavGraph.kt
-│       │   │   │
-│       │   │   ├── core/
-│       │   │   │   ├── database/
-│       │   │   │   │   ├── SmartChatDatabase.kt
-│       │   │   │   │   ├── DatabaseMigrations.kt
-│       │   │   │   │   ├── dao/
-│       │   │   │   │   │   ├── UserDao.kt
-│       │   │   │   │   │   ├── ConversationDao.kt
-│       │   │   │   │   │   ├── MessageDao.kt
-│       │   │   │   │   │   └── AttachmentDao.kt
-│       │   │   │   │   └── entity/
-│       │   │   │   │       ├── UserEntity.kt
-│       │   │   │   │       ├── ConversationEntity.kt
-│       │   │   │   │       ├── MessageEntity.kt
-│       │   │   │   │       └── AttachmentEntity.kt
-│       │   │   │   │
-│       │   │   │   ├── datastore/
-│       │   │   │   │   └── SettingsDataStore.kt
-│       │   │   │   ├── network/
-│       │   │   │   │   ├── SmartChatApi.kt
-│       │   │   │   │   └── NetworkModels.kt
-│       │   │   │   ├── ui/
-│       │   │   │   │   ├── components/
-│       │   │   │   │   └── theme/
-│       │   │   │   └── util/
-│       │   │   │
-│       │   │   ├── feature/
-│       │   │   │   ├── login/
-│       │   │   │   │   ├── LoginScreen.kt
-│       │   │   │   │   ├── LoginViewModel.kt
-│       │   │   │   │   └── LoginUiState.kt
-│       │   │   │   ├── chat/
-│       │   │   │   │   ├── ChatScreen.kt
-│       │   │   │   │   ├── ChatViewModel.kt
-│       │   │   │   │   ├── ChatUiState.kt
-│       │   │   │   │   ├── ChatRepository.kt
-│       │   │   │   │   └── components/
-│       │   │   │   ├── history/
-│       │   │   │   │   ├── ChatHistoryScreen.kt
-│       │   │   │   │   ├── ChatHistoryViewModel.kt
-│       │   │   │   │   └── ChatHistoryUiState.kt
-│       │   │   │   ├── profile/
-│       │   │   │   │   ├── ProfileScreen.kt
-│       │   │   │   │   ├── ProfileViewModel.kt
-│       │   │   │   │   └── ProfileUiState.kt
-│       │   │   │   └── settings/
-│       │   │   │       ├── SettingsScreen.kt
-│       │   │   │       ├── SettingsViewModel.kt
-│       │   │   │       └── SettingsUiState.kt
-│       │   │   │
-│       │   │   ├── repository/
-│       │   │   │   ├── UserRepository.kt
-│       │   │   │   ├── ConversationRepository.kt
-│       │   │   │   └── SettingsRepository.kt
-│       │   │   │
-│       │   │   ├── worker/
-│       │   │   │   ├── DatabaseCleanupWorker.kt
-│       │   │   │   └── WorkScheduler.kt
-│       │   │   │
-│       │   │   └── di/
-│       │   │       ├── DatabaseModule.kt
-│       │   │       └── RepositoryModule.kt
-│       │   │
-│       │   └── res/
-│       │       ├── drawable/
-│       │       ├── mipmap/
-│       │       ├── values/
-│       │       └── xml/
-│       │
-│       ├── test/
-│       └── androidTest/
-└── docs/
-    ├── design-document.md
-    ├── screen-sketches/
-    └── database-diagram.md
+│   ├── gradle.properties
+│   ├── gradle/
+│   └── app/
+│       ├── build.gradle.kts
+│       └── src/
+│           ├── main/
+│           │   ├── AndroidManifest.xml
+│           │   ├── java/com/smartchat/
+│           │   │   ├── SmartChatApplication.kt
+│           │   │   ├── MainActivity.kt
+│           │   │   ├── navigation/
+│           │   │   ├── core/
+│           │   │   │   ├── database/
+│           │   │   │   ├── datastore/
+│           │   │   │   ├── model/
+│           │   │   │   ├── network/
+│           │   │   │   ├── ui/
+│           │   │   │   └── util/
+│           │   │   ├── feature/
+│           │   │   │   ├── auth/
+│           │   │   │   ├── chat/
+│           │   │   │   ├── history/
+│           │   │   │   ├── profile/
+│           │   │   │   └── settings/
+│           │   │   ├── repository/
+│           │   │   ├── mapper/
+│           │   │   ├── worker/
+│           │   │   └── di/
+│           │   └── res/
+│           ├── test/
+│           └── androidTest/
+│
+└── backend/
+    ├── README.md
+    ├── package.json
+    ├── package-lock.json
+    ├── tsconfig.json
+    ├── prisma.config.ts
+    ├── docker-compose.yml
+    ├── .env.example
+    ├── prisma/
+    │   ├── schema.prisma
+    │   ├── seed.ts
+    │   └── migrations/
+    ├── src/
+    │   ├── server.ts
+    │   ├── app.ts
+    │   ├── config/
+    │   ├── database/
+    │   ├── middleware/
+    │   ├── routes/
+    │   ├── modules/
+    │   │   ├── auth/
+    │   │   ├── users/
+    │   │   ├── conversations/
+    │   │   ├── messages/
+    │   │   ├── attachments/
+    │   │   └── ai/
+    │   ├── shared/
+    │   └── generated/
+    │       └── prisma/
+    └── tests/
 ```
 
 ---
 
-## Why Package by Feature
-
-A package-by-feature structure keeps related files together.
-
-For example, everything required by the chat feature is inside:
+## Architecture
 
 ```text
-feature/chat/
+Android Compose Screen
+          |
+          v
+      ViewModel
+          |
+          v
+      Repository
+       /      \
+      v        v
+Room Database  Node REST API
+                    |
+                    v
+                 Prisma
+                    |
+                    v
+             PostgreSQL Database
 ```
 
-This is cleaner than placing every screen in one folder, every ViewModel in another folder, and every state class somewhere else. That layer-only structure becomes annoying as the project grows.
+### Android Responsibilities
 
-Shared infrastructure such as Room, networking, theme, and reusable components belongs in `core`.
+#### Compose Screens
+
+- Display interface state
+- Collect state from ViewModels
+- Send user actions to ViewModels
+- Avoid direct database and network access
+
+#### ViewModels
+
+- Hold screen state
+- Validate user input
+- Call repositories
+- Expose StateFlow values
+
+#### Repositories
+
+- Coordinate Room and backend access
+- Hide storage implementation details
+- Convert network and database models
+
+#### Room DAOs
+
+- Store local conversations
+- Store local messages
+- Store attachment metadata
+- Return Flow for live updates
+
+#### Workers
+
+- Clean temporary files
+- Perform deferred synchronization
+- Retry failed synchronization tasks
+
+### Backend Responsibilities
+
+#### Controllers
+
+- Read HTTP requests
+- Call services
+- Return API responses
+
+#### Services
+
+- Implement business logic
+- Validate permissions
+- Coordinate repositories and providers
+
+#### Repositories
+
+- Read and write database records through Prisma
+
+#### Middleware
+
+- Authenticate JWT tokens
+- Validate request bodies
+- Handle errors
+- Log requests
 
 ---
 
-## Screen Responsibilities
+## Database Design
 
-### Login Screen
+### Android Local Database
 
-- Accept a name and email
-- Create or load a local user
-- Navigate to the chat screen
+Room stores:
 
-For the MVP, this can be local login. Real authentication is not required unless the group adds a backend.
+- Conversations
+- Messages
+- Attachment metadata
+- Offline synchronization state
 
-### Chat Screen
+DataStore stores:
+
+- Access token
+- Current user ID
+- Theme
+- Notification preference
+- Language
+- First-launch state
+
+### Backend Database
+
+PostgreSQL stores:
+
+- Users
+- Conversations
+- Messages
+- Attachments
+- Prisma migration history
+
+### Relationships
+
+- One user can have many conversations.
+- One conversation belongs to one user.
+- One conversation can have many messages.
+- One message can have many attachments.
+
+---
+
+## PostgreSQL Docker Setup
+
+The Docker PostgreSQL database uses:
+
+```text
+Host: 127.0.0.1
+Host port: 5433
+Container port: 5432
+Database: smartchat
+User: smartchat
+```
+
+The local PostgreSQL installation may continue using port `5432`.
+
+### Start PostgreSQL
+
+```powershell
+cd backend
+docker compose up -d postgres
+docker compose ps
+```
+
+Expected port mapping:
+
+```text
+0.0.0.0:5433->5432/tcp
+```
+
+### Enter PostgreSQL
+
+```powershell
+docker compose exec postgres psql -U smartchat -d smartchat
+```
+
+Useful PostgreSQL commands:
+
+```sql
+\l
+\dt
+\q
+```
+
+---
+
+## Environment Configuration
+
+Create `backend/.env` from `.env.example`.
+
+```env
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://smartchat:smartchat@127.0.0.1:5433/smartchat?schema=public
+JWT_SECRET=replace-with-a-long-development-secret
+JWT_EXPIRES_IN=7d
+CORS_ORIGIN=*
+```
+
+Do not commit `.env`.
+
+---
+
+## Backend Installation
+
+```powershell
+cd backend
+
+npm config set registry "https://registry.npmjs.org/"
+npm install
+```
+
+Generate Prisma Client:
+
+```powershell
+npm run prisma:generate
+```
+
+Create the initial migration:
+
+```powershell
+npm run db:migrate -- --name init
+```
+
+Check migration status:
+
+```powershell
+npx prisma migrate status
+```
+
+Expected tables:
+
+```text
+User
+Conversation
+Message
+Attachment
+_prisma_migrations
+```
+
+---
+
+## Running the Backend
+
+```powershell
+cd backend
+
+$env:DATABASE_URL = "postgresql://smartchat:smartchat@127.0.0.1:5433/smartchat?schema=public"
+
+npm run dev
+```
+
+The backend runs at:
+
+```text
+http://localhost:3000
+```
+
+---
+
+## API Endpoints
+
+### Health
+
+```http
+GET /api/health
+```
+
+Example response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "service": "smartchat-backend"
+  }
+}
+```
+
+### Register
+
+```http
+POST /api/v1/auth/register
+```
+
+Example request:
+
+```json
+{
+  "email": "student@smartchat.local",
+  "password": "Password123",
+  "displayName": "Student User"
+}
+```
+
+### Login
+
+```http
+POST /api/v1/auth/login
+```
+
+Example request:
+
+```json
+{
+  "email": "student@smartchat.local",
+  "password": "Password123"
+}
+```
+
+### Conversations
+
+```http
+GET    /api/v1/conversations
+POST   /api/v1/conversations
+GET    /api/v1/conversations/{conversationId}
+DELETE /api/v1/conversations/{conversationId}
+```
+
+### Messages
+
+```http
+GET  /api/v1/conversations/{conversationId}/messages
+POST /api/v1/conversations/{conversationId}/messages
+```
+
+### AI
+
+```http
+POST /api/v1/ai/chat
+```
+
+The MVP uses a mock AI provider.
+
+---
+
+## PowerShell API Testing
+
+### Health
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:3000/api/health" `
+  -Method GET
+```
+
+### Registration
+
+```powershell
+$registerBody = @{
+    email       = "student@smartchat.local"
+    password    = "Password123"
+    displayName = "Student User"
+} | ConvertTo-Json
+
+$registerResponse = Invoke-RestMethod `
+    -Uri "http://localhost:3000/api/v1/auth/register" `
+    -Method POST `
+    -ContentType "application/json" `
+    -Body $registerBody
+
+$token = $registerResponse.data.accessToken
+```
+
+Do not place real access tokens in documentation or commit them to Git.
+
+---
+
+## Application Screens
+
+### Login and Registration
+
+- Register a new account
+- Log in with an existing account
+- Store the access token securely
+- Navigate to Chat after authentication
+
+### Chat
 
 - Display conversation messages
-- Send a user message
-- Create a simulated AI response
+- Send user messages
+- Receive mock AI responses
 - Select an image
-- Save messages to Room
+- Save messages locally
 
-### Chat History Screen
+### Chat History
 
 - Display stored conversations
-- Open a selected conversation
+- Open a conversation
 - Delete a conversation
-- Search by title if time allows
+- Search conversations if time allows
 
-### Profile Screen
+### Profile
 
-- Display the current user
-- Update display name
+- Display current user information
+- Edit display name
 - Change profile image
 
-### Settings Screen
+### Settings
 
 - Toggle dark mode
 - Enable or disable notifications
-- Select a language
+- Select language
 - Clear local history
+- Log out
 
 ---
 
-## Background Work Requirement
+## Background Work
 
-Use WorkManager for a real but simple task.
+The project uses WorkManager.
 
-### Recommended Worker
+### DatabaseCleanupWorker
 
-`DatabaseCleanupWorker`
+The worker may:
 
-The worker can:
+- Delete empty draft conversations
+- Delete broken attachment records
+- Remove temporary files
+- Retry deferred synchronization
 
-- Delete temporary attachment records whose files no longer exist
-- Remove draft conversations with no messages after a defined period
-- Clear old temporary files
-
-Schedule it as periodic work.
-
-Do not pretend that saving every message requires WorkManager. Normal database writes should happen immediately through Room and coroutines. WorkManager is for deferrable work that must still execute reliably.
-
----
-
-## Optional Networking
-
-Networking is optional because Room already satisfies the project requirement.
-
-If networking is added, keep it small:
-
-- Send a prompt to a controlled backend endpoint
-- Receive a text response
-- Store the response in Room
-
-Recommended request flow:
-
-```text
-Android App
-    |
-    | HTTPS
-    v
-Django REST Backend
-    |
-    v
-AI Provider
-```
-
-The Android app should never communicate with a paid AI provider using a secret key embedded in the app.
-
----
-
-## Optional Backend Structure
-
-Keep the backend in a separate repository or sibling directory.
-
-```text
-smartchat-backend/
-├── README.md
-├── manage.py
-├── requirements.txt
-├── config/
-│   ├── settings.py
-│   ├── urls.py
-│   └── wsgi.py
-├── accounts/
-├── conversations/
-│   ├── models.py
-│   ├── serializers.py
-│   ├── services.py
-│   ├── views.py
-│   └── urls.py
-├── ai_gateway/
-│   ├── providers/
-│   ├── services.py
-│   ├── views.py
-│   └── urls.py
-└── tests/
-```
-
-Suggested backend endpoints:
-
-```text
-POST /api/v1/auth/login/
-GET  /api/v1/conversations/
-POST /api/v1/conversations/
-GET  /api/v1/conversations/{id}/messages/
-POST /api/v1/conversations/{id}/messages/
-POST /api/v1/ai/chat/
-```
-
-Do not build this backend until the local Android MVP is complete.
+Normal message saving should use Room and coroutines directly. WorkManager is for reliable deferred work.
 
 ---
 
 ## Team Work Division
 
-### Cameron: Navigation and Login
+### Cameron: Navigation and Authentication
 
 - Application navigation
 - Login screen
-- Local user creation
-- Login validation
+- Registration screen
+- Authentication validation
 
 ### Julio: Chat Feature
 
-- Chat UI
+- Chat interface
 - Message bubbles
 - Message input
 - Image selection
-- Simulated AI responses
+- Mock AI responses
 
-### Jihad And Sahar: Data and Background Work
+### Jihad and Sahar: Data and Background Work
 
 - Room entities
 - DAOs
 - Database class
 - Repositories
-- WorkManager worker
+- PostgreSQL and Prisma
+- WorkManager workers
 
-### Narem: History, Profile, and Settings
+### Narem: History, Profile, Settings, and Documentation
 
 - Chat History screen
 - Profile screen
 - Settings screen
 - DataStore preferences
-- Testing and documentation
+- Testing
+- Documentation
 
-All members should review integration changes and avoid editing the same file at the same time.
-
----
-
-## Development Order
-
-### Phase 1: Project Foundation
-
-- Create the Compose project
-- Add navigation
-- Add theme
-- Create empty screens
-- Verify navigation between all screens
-
-### Phase 2: Room Database
-
-- Create entities
-- Create DAOs
-- Create the database
-- Create repositories
-- Test inserts, reads, updates, and deletes
-
-### Phase 3: Chat Feature
-
-- Create conversations
-- Send messages
-- Store messages
-- Display saved messages
-- Generate mock AI responses
-
-### Phase 4: Other Screens
-
-- Build history
-- Build profile
-- Build settings
-- Add image selection
-
-### Phase 5: Background Work
-
-- Create the cleanup worker
-- Schedule periodic work
-- Add a visible test option for demonstration
-
-### Phase 6: Testing and Presentation
-
-- Test navigation
-- Test empty states
-- Test database persistence
-- Test deleting conversations
-- Test screen rotation
-- Prepare screenshots and demo data
-
-### Phase 7: Optional Backend
-
-Only begin this phase after the full MVP works locally.
+All members should review integration changes and avoid editing the same file simultaneously.
 
 ---
 
-## Git Workflow
+## Development Progress
 
-Recommended branch names:
+### Completed
 
-```text
-main
-develop
-feature/login
-feature/chat
-feature/database
-feature/history
-feature/profile-settings
-```
+- Project folder structure
+- Docker PostgreSQL setup
+- PostgreSQL port separation
+- Prisma schema
+- Initial migration
+- Prisma Client generation
+- Health endpoint
+- User registration
+- Password hashing
+- JWT token generation
 
-Recommended workflow:
+### Next Tasks
 
-1. Create a feature branch from `develop`.
-2. Make one focused change.
-3. Open a pull request.
-4. Review the change.
-5. Merge into `develop`.
-6. Merge stable releases into `main`.
-
-Do not let every team member push unfinished work directly into `main`.
+1. Test login.
+2. Test authenticated profile access.
+3. Test conversation creation and listing.
+4. Test message creation.
+5. Test the mock AI endpoint.
+6. Complete Android Gradle sync.
+7. Connect Android registration and login.
+8. Add Android and backend tests.
+9. Persist selected image metadata in Room.
+10. Implement multipart attachment upload.
+11. Synchronize Room with backend conversations.
+12. Add token-expiration and logout handling.
+13. Improve loading, validation, and error UI.
+14. Add required screen sketches.
 
 ---
 
 ## Code Quality Rules
 
 - Use descriptive names.
-- Keep composables small.
+- Keep Compose functions small.
 - Do not access DAOs directly from screens.
-- Do not perform database work on the main thread.
-- Do not place navigation logic inside repositories.
-- Avoid giant ViewModels.
-- Add comments only where the reason is not obvious.
+- Do not access Prisma directly from controllers.
+- Do not perform blocking work on the main Android thread.
+- Keep navigation logic out of repositories.
+- Avoid giant ViewModels and services.
+- Add comments only when the reason is not obvious.
 - Remove dead code before submission.
-- Use consistent formatting.
-- Keep secrets out of the repository.
+- Keep secrets and tokens out of Git.
 
-Example of weak naming:
+Weak naming:
 
 ```kotlin
 val x = dao.getAll()
@@ -674,33 +722,42 @@ val conversations = conversationDao.observeAllConversations()
 
 Minimum tests should include:
 
+### Android
+
 - DAO insert and query test
 - Conversation deletion cascade test
-- ViewModel message-send test
+- Login ViewModel test
+- Chat ViewModel test
 - Settings repository test
 - Navigation smoke test
 
-Manual testing should verify:
+### Backend
 
-- Login data survives application restart
-- Conversations appear in history
-- Messages remain after leaving the screen
-- Deleted conversations disappear
-- Theme setting persists
-- Image selection does not crash
-- WorkManager task can execute
+- Registration service test
+- Login service test
+- JWT middleware test
+- Conversation endpoint test
+- Message endpoint test
+- AI endpoint test
+
+### Manual Checks
+
+- Registration creates a PostgreSQL user.
+- Login returns a valid token.
+- Protected endpoints reject missing tokens.
+- Conversations persist in PostgreSQL.
+- Room data survives Android restart.
+- Settings persist through DataStore.
+- WorkManager executes successfully.
+- Image selection does not crash.
 
 ---
 
-## Final Recommendation
+## Security
 
-Build the MVP without a backend.
-
-Use:
-
-- Room for users, conversations, messages, and attachments
-- DataStore for settings
-- WorkManager for cleanup work
-- Mock AI responses for the first working version
-
-Add a Django REST backend only after every course requirement works. A half-built backend plus a broken Android app is worse than a complete local app with clean architecture.
+- Passwords are hashed with bcrypt.
+- Authentication uses JWT access tokens.
+- Database credentials remain in `.env`.
+- AI provider keys must only exist in the backend.
+- Real tokens must never be committed or placed in documentation.
+- Production deployments must use HTTPS and a strong JWT secret.

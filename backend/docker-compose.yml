@@ -1,0 +1,24 @@
+﻿services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: smartchat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smartchat
+      POSTGRES_USER: smartchat
+      POSTGRES_PASSWORD: smartchat
+    ports:
+      - "5433:5432"
+    volumes:
+      - smartchat_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartchat -d smartchat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  smartchat_postgres_data:
+
+
+
