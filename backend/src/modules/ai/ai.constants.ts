@@ -1,6 +1,7 @@
 export const AI_PROVIDERS = {
   MOCK: "mock",
-  OPENAI: "openai"
+  OPENAI: "openai",
+  GEMINI: "gemini"
 } as const;
 
 export type AiProviderName =

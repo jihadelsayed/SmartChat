@@ -8,7 +8,7 @@
       POSTGRES_USER: smartchat
       POSTGRES_PASSWORD: smartchat
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - smartchat_postgres_data:/var/lib/postgresql/data
     healthcheck:
