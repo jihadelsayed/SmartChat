@@ -110,26 +110,14 @@ class ChatViewModel(
 
     fun retryFailedMessage() {
         if (_state.value.isSending) return
-        val failed = _state.value.messages.lastOrNull {
-            it.message.sender == "USER" && it.message.syncState == "FAILED"
-        } ?: return
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isSending = true, errorMessage = null)
-            when (val result = chatRepository.retryMessage(failed.message.id)) {
-                is ApiResult.Success -> _state.value = _state.value.copy(isSending = false)
-                is ApiResult.Error -> _state.value = _state.value.copy(
-                    isSending = false,
-                    errorMessage = result.message
-                )
-            }
-        }
+        _state.value = _state.value.copy(errorMessage = "Retry is not available in the simple chat mode yet.")
     }
 
     private fun observeMessages(conversationId: String) {
         messagesJob?.cancel()
         messagesJob = viewModelScope.launch {
-            chatRepository.observeMessages(conversationId).collect { messages ->
-                _state.value = _state.value.copy(messages = messages)
+            chatRepository.observeMessages(conversationId).collect { _ ->
+                _state.value = _state.value.copy(isLoading = false)
             }
         }
     }
