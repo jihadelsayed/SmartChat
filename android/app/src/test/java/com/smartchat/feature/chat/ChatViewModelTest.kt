@@ -8,7 +8,7 @@ import com.smartchat.data.ChatRepository
 import com.smartchat.data.SelectedAttachment
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -22,49 +22,37 @@ class ChatViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
-    fun sendCreatesConversationAndSendsMessageOnce() = runTest {
-        val repository = FakeChatRepository()
+    fun sendAddsUserAndAssistantMessagesWhenAiReplySucceeds() = runTest {
+        val repository = FakeChatRepository(ApiResult.Success("Hello from SmartChat"))
         val viewModel = ChatViewModel(null, repository)
         viewModel.updateInput("Hello SmartChat")
 
         viewModel.send()
         advanceUntilIdle()
 
-        assertEquals("Hello SmartChat", repository.createdFromMessage)
-        assertEquals(listOf("conversation-1" to "Hello SmartChat"), repository.sentMessages)
-        assertEquals("conversation-1", viewModel.state.value.conversationId)
+        assertEquals(2, viewModel.state.value.messages.size)
+        assertEquals("USER", viewModel.state.value.messages.first().sender)
+        assertEquals("Hello SmartChat", viewModel.state.value.messages.first().content)
+        assertEquals("ASSISTANT", viewModel.state.value.messages.last().sender)
+        assertEquals("Hello from SmartChat", viewModel.state.value.messages.last().content)
         assertFalse(viewModel.state.value.isSending)
         assertEquals("", viewModel.state.value.input)
     }
 
-    private class FakeChatRepository : ChatRepository {
-        private val conversations = MutableStateFlow<List<ConversationEntity>>(emptyList())
-        private val messages = MutableStateFlow<List<MessageWithAttachments>>(emptyList())
-        var createdFromMessage: String? = null
-        val sentMessages = mutableListOf<Pair<String, String>>()
-
-        override fun observeConversations(): Flow<List<ConversationEntity>> = conversations
-        override fun observeMessages(conversationId: String): Flow<List<MessageWithAttachments>> = messages
+    private class FakeChatRepository(
+        private val aiResult: ApiResult<String>
+    ) : ChatRepository {
+        override fun observeConversations(): Flow<List<ConversationEntity>> = flowOf(emptyList())
+        override fun observeMessages(conversationId: String): Flow<List<MessageWithAttachments>> = flowOf(emptyList())
         override suspend fun synchronizeConversations(): ApiResult<Unit> = ApiResult.Success(Unit)
         override suspend fun synchronizeMessages(conversationId: String): ApiResult<Unit> = ApiResult.Success(Unit)
-        override suspend fun createConversation(firstMessage: String): ApiResult<String> {
-            createdFromMessage = firstMessage
-            return ApiResult.Success("conversation-1")
-        }
-        override suspend fun inspectAttachment(contentUri: String): ApiResult<SelectedAttachment> =
-            ApiResult.Error("Not used")
-        override suspend fun sendMessage(
-            conversationId: String,
-            content: String,
-            attachment: SelectedAttachment?
-        ): ApiResult<Unit> {
-            sentMessages += conversationId to content
-            return ApiResult.Success(Unit)
-        }
+        override suspend fun createConversation(firstMessage: String): ApiResult<String> = ApiResult.Success("conversation-1")
+        override suspend fun inspectAttachment(contentUri: String): ApiResult<SelectedAttachment> = ApiResult.Error("Not used")
+        override suspend fun sendMessage(conversationId: String, content: String, attachment: SelectedAttachment?): ApiResult<Unit> = ApiResult.Success(Unit)
         override suspend fun retryMessage(messageId: String): ApiResult<Unit> = ApiResult.Success(Unit)
         override suspend fun retryAllPendingMessages(): Boolean = true
-        override suspend fun deleteConversation(conversationId: String): ApiResult<Unit> =
-            ApiResult.Success(Unit)
+        override suspend fun deleteConversation(conversationId: String): ApiResult<Unit> = ApiResult.Success(Unit)
         override suspend fun clearLocalData() = Unit
+        override suspend fun sendAiMessage(message: String): ApiResult<String> = aiResult
     }
 }

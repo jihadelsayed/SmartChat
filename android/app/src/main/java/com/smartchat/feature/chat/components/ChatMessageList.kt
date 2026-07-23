@@ -10,11 +10,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.smartchat.core.database.relation.MessageWithAttachments
+import com.smartchat.feature.chat.ChatMessage
 
 @Composable
 fun ChatMessageList(
-    messages: List<MessageWithAttachments>,
+    messages: List<ChatMessage>,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -27,6 +27,6 @@ fun ChatMessageList(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (messages.isEmpty()) item { Text("Start a conversation with SmartChat.") }
-        items(messages, key = { it.message.id }) { message -> MessageBubble(message) }
+        items(messages, key = { it.id }) { message -> MessageBubble(message) }
     }
 }

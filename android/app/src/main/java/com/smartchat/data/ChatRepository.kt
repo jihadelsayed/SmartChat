@@ -12,6 +12,7 @@ import com.smartchat.core.database.entity.MessageEntity
 import com.smartchat.core.database.relation.MessageWithAttachments
 import com.smartchat.core.network.ApiResult
 import com.smartchat.core.network.AttachmentDto
+import com.smartchat.core.network.ChatRequest
 import com.smartchat.core.network.CreateConversationRequest
 import com.smartchat.core.network.MessageDto
 import com.smartchat.core.network.SendMessageData
@@ -47,6 +48,7 @@ interface ChatRepository {
         content: String,
         attachment: SelectedAttachment? = null
     ): ApiResult<Unit>
+    suspend fun sendAiMessage(message: String): ApiResult<String>
     suspend fun retryMessage(messageId: String): ApiResult<Unit>
     suspend fun retryAllPendingMessages(): Boolean
     suspend fun deleteConversation(conversationId: String): ApiResult<Unit>
@@ -194,6 +196,13 @@ class DefaultChatRepository(
             )
         }
         return sendPendingMessage(localMessageId)
+    }
+
+    override suspend fun sendAiMessage(message: String): ApiResult<String> {
+        return when (val result = apiRequest { api.chat(ChatRequest(message)) }) {
+            is ApiResult.Success -> ApiResult.Success(result.value.reply)
+            is ApiResult.Error -> result
+        }
     }
 
     override suspend fun retryMessage(messageId: String): ApiResult<Unit> {

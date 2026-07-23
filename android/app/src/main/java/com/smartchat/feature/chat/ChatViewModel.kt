@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ChatViewModel(
     initialConversationId: String?,
@@ -62,30 +63,47 @@ class ChatViewModel(
         if (content.isEmpty() || _state.value.isSending) return
 
         viewModelScope.launch {
-            val attachment = _state.value.selectedAttachment
             _state.value = _state.value.copy(isSending = true, errorMessage = null)
-            val conversationId = _state.value.conversationId ?: when (
-                val createResult = chatRepository.createConversation(content)
-            ) {
-                is ApiResult.Success -> createResult.value.also { createdId ->
-                    _state.value = _state.value.copy(conversationId = createdId)
-                    observeMessages(createdId)
+
+            val userMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                sender = "USER",
+                content = content
+            )
+            val assistantPlaceholder = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                sender = "ASSISTANT",
+                content = ""
+            )
+            _state.value = _state.value.copy(
+                input = "",
+                selectedAttachment = null,
+                messages = _state.value.messages + userMessage + assistantPlaceholder
+            )
+
+            when (val result = chatRepository.sendAiMessage(content)) {
+                is ApiResult.Success -> {
+                    val assistantReply = result.value.ifBlank { "I’m here to help. Ask me anything." }
+                    _state.value = _state.value.copy(
+                        isSending = false,
+                        messages = _state.value.messages.dropLast(1) + ChatMessage(
+                            id = assistantPlaceholder.id,
+                            sender = "ASSISTANT",
+                            content = assistantReply
+                        )
+                    )
                 }
                 is ApiResult.Error -> {
                     _state.value = _state.value.copy(
                         isSending = false,
-                        errorMessage = createResult.message
+                        errorMessage = result.message,
+                        messages = _state.value.messages.dropLast(1) + ChatMessage(
+                            id = assistantPlaceholder.id,
+                            sender = "ASSISTANT",
+                            content = "I couldn’t respond right now."
+                        )
                     )
-                    return@launch
                 }
-            }
-            _state.value = _state.value.copy(input = "", selectedAttachment = null)
-            when (val result = chatRepository.sendMessage(conversationId, content, attachment)) {
-                is ApiResult.Success -> _state.value = _state.value.copy(isSending = false)
-                is ApiResult.Error -> _state.value = _state.value.copy(
-                    isSending = false,
-                    errorMessage = result.message
-                )
             }
         }
     }
