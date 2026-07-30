@@ -1,4 +1,5 @@
 import { AI_REQUEST_TIMEOUT_MS } from "../ai.constants";
+import type { AiProviderRequest } from "../ai.types";
 import type { AiProvider } from "./ai-provider.interface";
 
 interface GeminiResponse {
@@ -26,7 +27,7 @@ export class GeminiProvider implements AiProvider {
     this.model = model;
   }
 
-  async generateReply(input: { message: string }): Promise<string> {
+  async generateReply(input: AiProviderRequest): Promise<string> {
     if (!this.apiKey) {
       throw new Error(
         "GEMINI_API_KEY is not configured. Add it to backend/.env or switch back to the mock provider."

@@ -29,7 +29,10 @@ class AuthRepositoryTest {
     fun loginSavesReturnedSession() = runTest {
         val api = FakeAuthApi(AuthData("jwt-token", user))
         val sessionStore = RecordingSessionStore()
-        val repository = AuthRepositoryImpl(api, sessionStore)
+        var localCacheCleared = false
+        val repository = AuthRepositoryImpl(api, sessionStore) {
+            localCacheCleared = true
+        }
 
         val result = repository.login(" Student@Example.com ", "Password1")
 
@@ -37,6 +40,7 @@ class AuthRepositoryTest {
         assertEquals("student@example.com", api.loginRequest?.email)
         assertEquals(user, sessionStore.savedUser)
         assertEquals("jwt-token", sessionStore.savedToken)
+        assertTrue(localCacheCleared)
     }
 
     @Test

@@ -1,4 +1,5 @@
 import { prisma } from "../../database/prisma";
+import { AttachmentStatus } from "../../generated/prisma/client";
 import type { CreateAttachmentInput } from "./attachment.types";
 
 export const attachmentRepository = {
@@ -28,14 +29,29 @@ export const attachmentRepository = {
     });
   },
 
-  create(input: CreateAttachmentInput) {
+  create(userId: string, input: CreateAttachmentInput) {
     return prisma.attachment.create({
       data: {
+        userId,
+        clientAttachmentId: input.clientAttachmentId,
         messageId: input.messageId,
+        status: AttachmentStatus.UPLOADED,
         fileName: input.fileName,
         mimeType: input.mimeType,
         fileUrl: input.fileUrl,
-        sizeBytes: input.sizeBytes
+        sizeBytes: input.sizeBytes,
+        contentHash: input.contentHash
+      }
+    });
+  },
+
+  findByClientAttachmentId(userId: string, clientAttachmentId: string) {
+    return prisma.attachment.findUnique({
+      where: {
+        userId_clientAttachmentId: {
+          userId,
+          clientAttachmentId
+        }
       }
     });
   },
@@ -44,11 +60,7 @@ export const attachmentRepository = {
     return prisma.attachment.findFirst({
       where: {
         id: attachmentId,
-        message: {
-          conversation: {
-            userId
-          }
-        }
+        userId
       }
     });
   },

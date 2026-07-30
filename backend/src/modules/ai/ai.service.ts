@@ -1,4 +1,6 @@
 import { environment } from "../../config/environment";
+import type { AiContextMessage, AiImageInput } from "./ai.types";
+import { AiImageInputUnsupportedError } from "./ai.errors";
 import type { AiProvider } from "./providers/ai-provider.interface";
 import { GeminiProvider } from "./providers/gemini.provider";
 import { MockAiProvider } from "./providers/mock.provider";
@@ -12,7 +14,24 @@ const provider: AiProvider =
       : new MockAiProvider();
 
 export const aiService = {
-  reply(message: string): Promise<string> {
-    return provider.generateReply({ message });
+  reply(
+    message: string,
+    recentMessages: AiContextMessage[] = [],
+    images: AiImageInput[] = []
+  ): Promise<string> {
+    if (images.length > 0 && provider.supportsImages !== true) {
+      throw new AiImageInputUnsupportedError();
+    }
+    return provider.generateReply({
+      message,
+      messages: [
+        ...recentMessages,
+        {
+          role: "user",
+          content: message
+        }
+      ],
+      images
+    });
   }
 };

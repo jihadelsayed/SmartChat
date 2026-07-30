@@ -8,8 +8,13 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { after, test } from "node:test";
+import "../setup";
 import { runAttachmentCleanup } from "../../src/jobs/attachment-cleanup.job";
 import { MAXIMUM_ATTACHMENT_SIZE_BYTES } from "../../src/middleware/upload.middleware";
+import { MockAiProvider } from "../../src/modules/ai/providers/mock.provider";
+import type { AiProviderRequest } from "../../src/modules/ai/ai.types";
+import { prisma } from "../../src/database/prisma";
+import { AttachmentStatus } from "../../src/generated/prisma/client";
 import {
   deleteUploadedFile,
   resolveUploadPath
@@ -47,14 +52,22 @@ interface AttachmentData {
 
 const testServer = await startTestServer();
 const registeredUser = await registerTestUser(testServer.baseUrl);
+const otherUser = await registerTestUser(testServer.baseUrl);
 let uploadedFileUrl: string | undefined;
+const stagedFileUrls = new Set<string>();
 
 after(async () => {
   if (uploadedFileUrl) {
     await deleteUploadedFile(uploadedFileUrl);
   }
+  for (const fileUrl of stagedFileUrls) {
+    await deleteUploadedFile(fileUrl);
+  }
 
-  await cleanupTestUsers([registeredUser.credentials.email]);
+  await cleanupTestUsers([
+    registeredUser.credentials.email,
+    otherUser.credentials.email
+  ]);
   await testServer.stop();
 });
 
@@ -93,21 +106,46 @@ async function createMessageForAttachment(): Promise<MessageData> {
   return messageBody.data.userMessage;
 }
 
+async function uploadStaged(
+  accessToken: string,
+  clientAttachmentId: string,
+  mimeType: string,
+  fileName: string,
+  contents?: Uint8Array
+) {
+  const response = await fetch(`${testServer.baseUrl}/api/v1/attachments`, {
+    method: "POST",
+    headers: {
+      ...authenticatedHeaders(accessToken),
+      "x-client-attachment-id": clientAttachmentId
+    },
+    body: createUploadForm(mimeType, fileName, contents)
+  });
+  const body = await readApiEnvelope<AttachmentData>(response);
+  if (body.data?.fileUrl) stagedFileUrls.add(body.data.fileUrl);
+  return {
+    response,
+    body
+  };
+}
+
 function createUploadForm(
   mimeType: string,
   fileName: string,
-  contents = new Uint8Array([137, 80, 78, 71])
+  contents: Uint8Array<ArrayBufferLike> = new Uint8Array([
+    137, 80, 78, 71, 13, 10, 26, 10
+  ])
 ): FormData {
   const form = new FormData();
   form.append(
     "file",
-    new Blob([contents], { type: mimeType }),
+    new Blob([new Uint8Array(contents)], { type: mimeType }),
     fileName
   );
   return form;
 }
 
-test("attachment endpoints upload, list, read, and physically delete a file", async () => {
+test("attachment endpoints upload, list, read, and protect associated files", async () => {
   assert.equal(MAXIMUM_ATTACHMENT_SIZE_BYTES, 10 * 1024 * 1024);
 
   const message = await createMessageForAttachment();
@@ -157,9 +195,8 @@ test("attachment endpoints upload, list, read, and physically delete a file", as
     headers: authorizationHeaders
   });
 
-  assert.equal(deleteResponse.status, 200);
-  await assert.rejects(access(uploadedFilePath));
-  uploadedFileUrl = undefined;
+  assert.equal(deleteResponse.status, 409);
+  await access(uploadedFilePath);
 });
 
 test("unsupported attachment MIME types return a client error", async () => {
@@ -176,6 +213,253 @@ test("unsupported attachment MIME types return a client error", async () => {
 
   assert.equal(response.status, 415);
   assert.equal(responseBody.error?.code, "UNSUPPORTED_ATTACHMENT_TYPE");
+});
+
+for (const supported of [
+  {
+    mimeType: "image/jpeg",
+    fileName: "photo.jpg",
+    bytes: new Uint8Array([0xff, 0xd8, 0xff])
+  },
+  {
+    mimeType: "image/png",
+    fileName: "photo.png",
+    bytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  },
+  {
+    mimeType: "image/webp",
+    fileName: "photo.webp",
+    bytes: new TextEncoder().encode("RIFF0000WEBP")
+  }
+]) {
+  test(`staged ${supported.mimeType} uploads succeed`, async () => {
+    const upload = await uploadStaged(
+      registeredUser.accessToken,
+      randomUUID(),
+      supported.mimeType,
+      supported.fileName,
+      supported.bytes
+    );
+    assert.equal(upload.response.status, 201);
+    assert.equal(upload.body.data?.messageId, null);
+    assert.equal(upload.body.data?.mimeType, supported.mimeType);
+  });
+}
+
+test("HEIC and fake image content are rejected", async () => {
+  const heic = await uploadStaged(
+    registeredUser.accessToken,
+    randomUUID(),
+    "image/heic",
+    "photo.heic",
+    new Uint8Array([0, 0, 0, 0])
+  );
+  assert.equal(heic.response.status, 415);
+  assert.equal(heic.body.error?.code, "UNSUPPORTED_ATTACHMENT_TYPE");
+
+  const fakePng = await uploadStaged(
+    registeredUser.accessToken,
+    randomUUID(),
+    "image/png",
+    "fake.png",
+    new TextEncoder().encode("not an image")
+  );
+  assert.equal(fakePng.response.status, 415);
+  assert.equal(fakePng.body.error?.code, "INVALID_ATTACHMENT_CONTENT");
+});
+
+test("staged upload idempotency is scoped and rejects changed content", async () => {
+  const clientAttachmentId = randomUUID();
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const [first, concurrent] = await Promise.all([
+    uploadStaged(
+      registeredUser.accessToken,
+      clientAttachmentId,
+      "image/png",
+      "safe.png",
+      bytes
+    ),
+    uploadStaged(
+      registeredUser.accessToken,
+      clientAttachmentId,
+      "image/png",
+      "safe.png",
+      bytes
+    )
+  ]);
+  assert.deepEqual(
+    [first.response.status, concurrent.response.status].sort(),
+    [200, 201]
+  );
+  assert.equal(first.body.data?.id, concurrent.body.data?.id);
+  assert.equal(
+    await prisma.attachment.count({
+      where: {
+        userId: registeredUser.user.id,
+        clientAttachmentId
+      }
+    }),
+    1
+  );
+
+  const conflict = await uploadStaged(
+    registeredUser.accessToken,
+    clientAttachmentId,
+    "image/png",
+    "changed.png",
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
+  );
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.body.error?.code, "ATTACHMENT_ID_CONFLICT");
+
+  const privateRead = await fetch(
+    `${testServer.baseUrl}/api/v1/attachments/${first.body.data?.id}`,
+    { headers: authenticatedHeaders(otherUser.accessToken) }
+  );
+  assert.equal(privateRead.status, 404);
+});
+
+test("message association is atomic and image input reaches the provider", async (testContext) => {
+  const upload = await uploadStaged(
+    registeredUser.accessToken,
+    randomUUID(),
+    "image/png",
+    "../../unsafe.png",
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  );
+  assert.equal(upload.response.status, 201);
+  assert.ok(upload.body.data);
+  assert.doesNotMatch(upload.body.data.fileUrl, /\.\.|unsafe/);
+
+  const conversationResponse = await fetch(
+    `${testServer.baseUrl}/api/v1/conversations`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(registeredUser.accessToken),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ title: "Image message" })
+    }
+  );
+  const conversation =
+    await readApiEnvelope<ConversationData>(conversationResponse);
+  assert.ok(conversation.data);
+  let providerImages = 0;
+  testContext.mock.method(
+    MockAiProvider.prototype,
+    "generateReply",
+    async (input: AiProviderRequest) => {
+      providerImages = input.images?.length ?? 0;
+      return "Image received";
+    }
+  );
+
+  const messageResponse = await fetch(
+    `${testServer.baseUrl}/api/v1/conversations/${conversation.data.id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(registeredUser.accessToken),
+        "content-type": "application/json",
+        "idempotency-key": randomUUID()
+      },
+      body: JSON.stringify({
+        content: "",
+        attachmentIds: [upload.body.data.id, upload.body.data.id]
+      })
+    }
+  );
+  const messageBody = await readApiEnvelope<{
+    userMessage: { attachments: AttachmentData[] };
+  }>(messageResponse);
+  assert.equal(messageResponse.status, 201);
+  assert.equal(providerImages, 1);
+  assert.equal(messageBody.data?.userMessage.attachments.length, 1);
+  assert.equal(
+    messageBody.data?.userMessage.attachments[0]?.id,
+    upload.body.data.id
+  );
+});
+
+test("another user's or incomplete attachment cannot be associated", async (testContext) => {
+  const upload = await uploadStaged(
+    otherUser.accessToken,
+    randomUUID(),
+    "image/png",
+    "private.png",
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  );
+  assert.ok(upload.body.data);
+  const conversationResponse = await fetch(
+    `${testServer.baseUrl}/api/v1/conversations`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(registeredUser.accessToken),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ title: "Rejected attachments" })
+    }
+  );
+  const conversation =
+    await readApiEnvelope<ConversationData>(conversationResponse);
+  assert.ok(conversation.data);
+  let providerCalls = 0;
+  testContext.mock.method(
+    MockAiProvider.prototype,
+    "generateReply",
+    async () => {
+      providerCalls += 1;
+      return "Must not run";
+    }
+  );
+
+  const response = await fetch(
+    `${testServer.baseUrl}/api/v1/conversations/${conversation.data.id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(registeredUser.accessToken),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        content: "Private",
+        attachmentIds: [upload.body.data.id]
+      })
+    }
+  );
+  assert.equal(response.status, 409);
+  assert.equal(providerCalls, 0);
+
+  const incomplete = await prisma.attachment.create({
+    data: {
+      userId: registeredUser.user.id,
+      clientAttachmentId: randomUUID(),
+      status: AttachmentStatus.PROCESSING,
+      fileName: "incomplete.png",
+      mimeType: "image/png",
+      fileUrl: `/uploads/${randomUUID()}`,
+      sizeBytes: 8,
+      contentHash: randomUUID()
+    }
+  });
+  const incompleteResponse = await fetch(
+    `${testServer.baseUrl}/api/v1/conversations/${conversation.data.id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders(registeredUser.accessToken),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        content: "Incomplete",
+        attachmentIds: [incomplete.id]
+      })
+    }
+  );
+  assert.equal(incompleteResponse.status, 409);
+  assert.equal(providerCalls, 0);
 });
 
 test("attachments larger than 10 MB are rejected and removed", async () => {
@@ -225,7 +509,7 @@ test("a failed attachment database write removes the uploaded file", async () =>
 test("the orphan cleanup job removes unreferenced files after its grace period", async () => {
   const orphanFileUrl = `/uploads/orphan-${randomUUID()}.png`;
   const orphanFilePath = resolveUploadPath(orphanFileUrl);
-  const oldTimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const oldTimestamp = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 
   await writeFile(orphanFilePath, new Uint8Array([137, 80, 78, 71]));
   await utimes(orphanFilePath, oldTimestamp, oldTimestamp);

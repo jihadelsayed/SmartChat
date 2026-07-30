@@ -12,7 +12,8 @@ export function validate(schema: ZodType): RequestHandler {
     const result = schema.safeParse({
       body: request.body,
       params: request.params,
-      query: request.query
+      query: request.query,
+      headers: request.headers
     });
 
     if (!result.success) {

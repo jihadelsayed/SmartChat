@@ -2,7 +2,7 @@ import type { Attachment } from "../../generated/prisma/client";
 
 export interface AttachmentResponse {
   id: string;
-  messageId: string;
+  messageId: string | null;
   fileName: string;
   mimeType: string;
   fileUrl: string;

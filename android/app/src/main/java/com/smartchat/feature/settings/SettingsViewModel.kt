@@ -58,6 +58,7 @@ class SettingsViewModel(
     fun logout() {
         viewModelScope.launch {
             _state.value = _state.value.copy(isWorking = true)
+            chatRepository.clearLocalData()
             settingsStore.clearSession()
         }
     }

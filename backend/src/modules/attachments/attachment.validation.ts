@@ -19,3 +19,12 @@ export const attachmentIdSchema = z.object({
   }),
   query: emptyQuerySchema
 });
+
+export const stagedAttachmentSchema = z.object({
+  body: optionalBodySchema,
+  params: z.object({}),
+  query: emptyQuerySchema,
+  headers: z.object({
+    "x-client-attachment-id": z.string().uuid()
+  }).passthrough()
+});

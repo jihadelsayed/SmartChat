@@ -159,9 +159,15 @@ private fun SessionNavigation(
                 ChatScreen(entry.arguments?.getString("conversationId"), chatRepository)
             }
             composable(AppDestination.History.route) {
-                HistoryScreen(chatRepository) { conversationId ->
-                    navController.navigate(AppDestination.Chat.route(conversationId))
-                }
+                HistoryScreen(
+                    chatRepository = chatRepository,
+                    onOpenConversation = { conversationId ->
+                        navController.navigate(AppDestination.Chat.route(conversationId))
+                    },
+                    onNewConversation = {
+                        navController.navigate(AppDestination.Chat.route())
+                    }
+                )
             }
             composable(AppDestination.Profile.route) {
                 ProfileScreen(profileRepository)

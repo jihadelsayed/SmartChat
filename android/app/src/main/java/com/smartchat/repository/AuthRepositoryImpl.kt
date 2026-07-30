@@ -13,7 +13,8 @@ import retrofit2.Response
 
 class AuthRepositoryImpl(
     private val api: AuthApi,
-    private val sessionStore: SessionStore
+    private val sessionStore: SessionStore,
+    private val onAuthenticated: suspend () -> Unit = {}
 ) : AuthRepository {
     override suspend fun login(email: String, password: String): ApiResult<PublicUser> {
         return authenticate {
@@ -41,6 +42,7 @@ class AuthRepositoryImpl(
         request: suspend () -> Response<ApiEnvelope<AuthData>>
     ): ApiResult<PublicUser> = when (val result = apiRequest(request)) {
         is ApiResult.Success -> {
+            onAuthenticated()
             sessionStore.saveSession(result.value.user, result.value.accessToken)
             ApiResult.Success(result.value.user)
         }

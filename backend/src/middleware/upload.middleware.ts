@@ -15,24 +15,18 @@ const storage = multer.diskStorage({
     callback(null, uploadDirectory);
   },
 
-  filename: (_request, file, callback) => {
-    const originalExtension = path
-      .extname(file.originalname)
-      .toLowerCase();
-
-    const storedFileName = `${randomUUID()}${originalExtension}`;
-
-    callback(null, storedFileName);
+  filename: (_request, _file, callback) => {
+    callback(null, randomUUID());
   }
 });
 
 export const MAXIMUM_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+export const MAXIMUM_ATTACHMENTS_PER_MESSAGE = 4;
 
 export const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
-  "image/webp",
-  "image/gif"
+  "image/webp"
 ]);
 
 const attachmentUpload = multer({
@@ -47,7 +41,7 @@ const attachmentUpload = multer({
     if (!ALLOWED_ATTACHMENT_MIME_TYPES.has(file.mimetype)) {
       callback(
         new AppError(
-          "Unsupported attachment type. Use JPEG, PNG, WebP, or GIF",
+          "Unsupported attachment type. Use JPEG, PNG, or WebP",
           415,
           "UNSUPPORTED_ATTACHMENT_TYPE"
         )

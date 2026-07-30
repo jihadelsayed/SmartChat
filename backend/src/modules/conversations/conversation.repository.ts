@@ -14,7 +14,10 @@ export const conversationRepository = {
       where: { id: conversationId, userId },
       include: {
         messages: {
-          orderBy: { createdAt: "asc" },
+          orderBy: [
+            { createdAt: "asc" },
+            { id: "asc" }
+          ],
           include: { attachments: true }
         }
       }

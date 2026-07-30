@@ -1,9 +1,19 @@
 import type { Request, Response } from "express";
 import { successResponse } from "../../shared/responses/api-response";
-import { aiService } from "./ai.service";
+import { messageService } from "../messages/message.service";
+import { mapAiChatResponse } from "./ai.mapper";
 
 export const aiController = {
   async chat(request: Request, response: Response) {
-    response.json(successResponse({ reply: await aiService.reply(request.body.message) }));
+    const { userMessage, assistantMessage } =
+      await messageService.sendFromAiChat({
+        userId: request.authenticatedUser!.id,
+        message: request.body.message,
+        conversationId: request.body.conversationId
+      });
+
+    response.json(
+      successResponse(mapAiChatResponse(userMessage, assistantMessage))
+    );
   }
 };

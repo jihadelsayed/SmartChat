@@ -1,6 +1,7 @@
 package com.smartchat.worker
 
 import android.content.Context
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.Constraints
@@ -33,6 +34,11 @@ object WorkScheduler {
     fun enqueuePendingSync(context: Context) {
         val request = OneTimeWorkRequestBuilder<ConversationSyncWorker>()
             .setConstraints(connectedConstraint)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                10,
+                TimeUnit.SECONDS
+            )
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             PENDING_SYNC_NAME,

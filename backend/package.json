@@ -9,7 +9,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/src/server.js",
-    "test": "npm run test:typecheck && tsx --test --test-concurrency=1 tests/integration/health.routes.test.ts tests/integration/auth.routes.test.ts tests/integration/user.routes.test.ts tests/integration/conversation.routes.test.ts tests/integration/message.routes.test.ts tests/integration/attachment.routes.test.ts tests/integration/ai.routes.test.ts",
+    "test": "npm run test:typecheck && tsx --test --test-concurrency=1 tests/unit/environment.test.ts tests/unit/openai.provider.test.ts tests/integration/health.routes.test.ts tests/integration/auth.routes.test.ts tests/integration/user.routes.test.ts tests/integration/conversation.routes.test.ts tests/integration/message.routes.test.ts tests/integration/attachment.routes.test.ts tests/integration/ai.routes.test.ts",
     "test:typecheck": "tsc --noEmit -p tsconfig.test.json",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
@@ -32,6 +32,7 @@
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.11.0",
     "multer": "^2.0.2",
+    "openai": "^7.1.0",
     "pg": "^8.16.3",
     "zod": "^4.4.3"
   },

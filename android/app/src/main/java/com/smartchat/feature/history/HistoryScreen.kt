@@ -28,12 +28,21 @@ import com.smartchat.core.util.DateFormatter
 import com.smartchat.data.ChatRepository
 
 @Composable
-fun HistoryScreen(chatRepository: ChatRepository, onOpenConversation: (String) -> Unit) {
+fun HistoryScreen(
+    chatRepository: ChatRepository,
+    onOpenConversation: (String) -> Unit,
+    onNewConversation: () -> Unit
+) {
     val viewModel: HistoryViewModel = viewModel(factory = HistoryViewModel.Factory(chatRepository))
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize().padding(16.dp).testTag("history_screen")) {
-        Text("Chat History", style = MaterialTheme.typography.headlineMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Chat History", style = MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = onNewConversation) {
+                Text("New chat")
+            }
+        }
         state.errorMessage?.let {
             ErrorMessage(it, Modifier.fillMaxWidth(), viewModel::refresh)
         }

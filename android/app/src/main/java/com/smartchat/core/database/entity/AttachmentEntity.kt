@@ -15,16 +15,24 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("messageId")]
+    indices = [
+        Index("messageId"),
+        Index(value = ["backendAttachmentId"], unique = true)
+    ]
 )
 data class AttachmentEntity(
     @PrimaryKey val id: String,
     val messageId: String,
     val contentUri: String?,
+    val localFilePath: String? = null,
     val fileName: String,
     val mimeType: String,
     val sizeBytes: Long,
+    val contentHash: String? = null,
     val backendUrl: String? = null,
-    val syncState: String = "PENDING",
+    val backendAttachmentId: String? = null,
+    val syncState: String = AttachmentUploadState.PENDING_UPLOAD,
+    val failureReason: String? = null,
+    val attemptStartedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

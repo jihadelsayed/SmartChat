@@ -24,7 +24,7 @@ fun AttachmentPreview(
         verticalAlignment = Alignment.CenterVertically
     ) {
         AsyncImage(
-            model = attachment.contentUri,
+            model = java.io.File(attachment.localFilePath),
             contentDescription = "Selected ${attachment.fileName}",
             modifier = Modifier.size(56.dp)
         )

@@ -15,7 +15,7 @@ function isHttpError(error: unknown): error is HttpError {
 
 export function errorHandler(
   error: unknown,
-  _request: Request,
+  request: Request,
   response: Response,
   _next: NextFunction
 ): void {
@@ -56,12 +56,21 @@ export function errorHandler(
   }
 
   if (error instanceof AppError) {
+    if (error.retryAfter) {
+      response.setHeader("Retry-After", error.retryAfter);
+    }
+
     response.status(error.statusCode).json({
       success: false,
       error: {
         code: error.code,
         message: error.message,
-        details: error.details
+        details: error.details,
+        retryable: error.retryable,
+        requestId:
+          error.retryable !== undefined
+            ? request.requestId
+            : undefined
       }
     });
 

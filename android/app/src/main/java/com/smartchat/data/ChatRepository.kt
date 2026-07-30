@@ -1,18 +1,16 @@
 package com.smartchat.data
 
 import android.content.ContentResolver
-import android.content.Intent
-import android.provider.OpenableColumns
-import androidx.core.net.toUri
 import androidx.room.withTransaction
 import com.smartchat.core.database.SmartChatDatabase
 import com.smartchat.core.database.entity.AttachmentEntity
+import com.smartchat.core.database.entity.AttachmentUploadState
 import com.smartchat.core.database.entity.ConversationEntity
+import com.smartchat.core.database.entity.MessageDeliveryState
 import com.smartchat.core.database.entity.MessageEntity
 import com.smartchat.core.database.relation.MessageWithAttachments
 import com.smartchat.core.network.ApiResult
 import com.smartchat.core.network.AttachmentDto
-import com.smartchat.core.network.ChatRequest
 import com.smartchat.core.network.CreateConversationRequest
 import com.smartchat.core.network.MessageDto
 import com.smartchat.core.network.SendMessageData
@@ -24,16 +22,24 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+import java.io.File
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 data class SelectedAttachment(
-    val contentUri: String,
+    val id: String,
+    val localMessageId: String,
+    val localFilePath: String,
     val fileName: String,
     val mimeType: String,
     val sizeBytes: Long
+)
+
+data class PendingQueueResult(
+    val retryableWorkRemaining: Boolean
 )
 
 interface ChatRepository {
@@ -42,15 +48,16 @@ interface ChatRepository {
     suspend fun synchronizeConversations(): ApiResult<Unit>
     suspend fun synchronizeMessages(conversationId: String): ApiResult<Unit>
     suspend fun createConversation(firstMessage: String): ApiResult<String>
-    suspend fun inspectAttachment(contentUri: String): ApiResult<SelectedAttachment>
+    fun observeSelectedAttachments(conversationKey: String): Flow<List<SelectedAttachment>>
+    suspend fun selectAttachments(conversationKey: String, contentUris: List<String>): ApiResult<Unit>
+    suspend fun removeSelectedAttachment(attachmentId: String)
     suspend fun sendMessage(
         conversationId: String,
         content: String,
-        attachment: SelectedAttachment? = null
+        localMessageId: String? = null
     ): ApiResult<Unit>
-    suspend fun sendAiMessage(message: String): ApiResult<String>
     suspend fun retryMessage(messageId: String): ApiResult<Unit>
-    suspend fun retryAllPendingMessages(): Boolean
+    suspend fun retryAllPendingMessages(): PendingQueueResult
     suspend fun deleteConversation(conversationId: String): ApiResult<Unit>
     suspend fun clearLocalData()
 }
@@ -58,12 +65,20 @@ interface ChatRepository {
 class DefaultChatRepository(
     private val database: SmartChatDatabase,
     private val api: SmartChatApi,
-    private val contentResolver: ContentResolver,
-    private val onSyncNeeded: () -> Unit
+    contentResolver: ContentResolver,
+    filesDirectory: File,
+    private val onSyncNeeded: () -> Unit,
+    private val clock: () -> Long = System::currentTimeMillis
 ) : ChatRepository {
     private val conversationDao = database.conversationDao()
     private val messageDao = database.messageDao()
     private val attachmentDao = database.attachmentDao()
+    private val pendingAttachmentDao = database.pendingAttachmentDao()
+    private val attachmentFileStore = AttachmentFileStore(
+        contentResolver,
+        filesDirectory,
+        clock
+    )
 
     override fun observeConversations(): Flow<List<ConversationEntity>> = conversationDao.observeAll()
 
@@ -73,14 +88,19 @@ class DefaultChatRepository(
     override suspend fun synchronizeConversations(): ApiResult<Unit> {
         return when (val result = apiRequest(api::conversations)) {
             is ApiResult.Success -> {
-                conversationDao.insertAll(result.value.map { remote ->
+                val conversations = result.value.mapNotNull { remote ->
+                    val createdAt = parseTimestampOrNull(remote.createdAt)
+                        ?: return@mapNotNull null
+                    val updatedAt = parseTimestampOrNull(remote.updatedAt)
+                        ?: return@mapNotNull null
                     ConversationEntity(
                         id = remote.id,
                         title = remote.title,
-                        createdAt = parseTimestamp(remote.createdAt),
-                        updatedAt = parseTimestamp(remote.updatedAt)
+                        createdAt = createdAt,
+                        updatedAt = updatedAt
                     )
-                })
+                }
+                conversationDao.synchronizeRemote(conversations)
                 ApiResult.Success(Unit)
             }
             is ApiResult.Error -> result
@@ -104,7 +124,7 @@ class DefaultChatRepository(
         return when (val result = apiRequest { api.createConversation(CreateConversationRequest(title)) }) {
             is ApiResult.Success -> {
                 val remote = result.value
-                conversationDao.insert(
+                conversationDao.upsert(
                     ConversationEntity(
                         id = remote.id,
                         title = remote.title,
@@ -118,118 +138,163 @@ class DefaultChatRepository(
         }
     }
 
-    override suspend fun inspectAttachment(contentUri: String): ApiResult<SelectedAttachment> {
-        val uri = contentUri.toUri()
-        runCatching {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    override fun observeSelectedAttachments(
+        conversationKey: String
+    ): Flow<List<SelectedAttachment>> =
+        pendingAttachmentDao.observe(conversationKey).map { attachments ->
+            attachments.map { attachment ->
+                SelectedAttachment(
+                    id = attachment.id,
+                    localMessageId = attachment.localMessageId,
+                    localFilePath = attachment.localFilePath,
+                    fileName = attachment.fileName,
+                    mimeType = attachment.mimeType,
+                    sizeBytes = attachment.sizeBytes
+                )
+            }
         }
-        val mimeType = contentResolver.getType(uri).orEmpty().lowercase()
-        val supportedTypes = setOf(
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "image/heic",
-            "image/heif"
-        )
-        if (mimeType !in supportedTypes) {
-            return ApiResult.Error("Unsupported image type. Choose JPEG, PNG, WebP, GIF, or HEIC.")
+
+    override suspend fun selectAttachments(
+        conversationKey: String,
+        contentUris: List<String>
+    ): ApiResult<Unit> {
+        val existing = pendingAttachmentDao.findForConversation(conversationKey)
+        if (existing.size + contentUris.size > AttachmentFileStore.MAX_ATTACHMENTS) {
+            return ApiResult.Error("You can attach up to four images.", retryable = false)
         }
-        var fileName = uri.lastPathSegment ?: "image"
-        var sizeBytes = -1L
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (nameIndex >= 0) fileName = cursor.getString(nameIndex) ?: fileName
-                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) sizeBytes = cursor.getLong(sizeIndex)
+        val localMessageId = existing.firstOrNull()?.localMessageId ?: UUID.randomUUID().toString()
+        val staged = mutableListOf<com.smartchat.core.database.entity.PendingAttachmentEntity>()
+        for (contentUri in contentUris) {
+            when (
+                val result = attachmentFileStore.copyToOwnedStorage(
+                    contentUri,
+                    conversationKey,
+                    localMessageId
+                )
+            ) {
+                is ApiResult.Error -> {
+                    staged.forEach {
+                        attachmentFileStore.delete(it.localFilePath)
+                    }
+                    return result
+                }
+                is ApiResult.Success -> {
+                    if (
+                        (existing + staged).any {
+                            it.contentHash == result.value.contentHash
+                        }
+                    ) {
+                        attachmentFileStore.delete(result.value.localFilePath)
+                    } else {
+                        staged += result.value
+                    }
                 }
             }
-        if (sizeBytes < 0) {
-            sizeBytes = runCatching {
-                contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
-            }.getOrNull() ?: -1L
         }
-        if (sizeBytes < 0) {
-            return ApiResult.Error("SmartChat could not determine the image size.")
+        try {
+            pendingAttachmentDao.upsertAll(staged)
+        } catch (_: Exception) {
+            staged.forEach {
+                attachmentFileStore.delete(it.localFilePath)
+            }
+            return ApiResult.Error("SmartChat could not save the selected images.")
         }
-        if (sizeBytes > 10L * 1024L * 1024L) {
-            return ApiResult.Error("Images must be 10 MB or smaller.")
+        return ApiResult.Success(Unit)
+    }
+
+    override suspend fun removeSelectedAttachment(attachmentId: String) {
+        pendingAttachmentDao.findById(attachmentId)?.let { attachment ->
+            pendingAttachmentDao.deleteById(attachmentId)
+            attachmentFileStore.delete(attachment.localFilePath)
         }
-        return ApiResult.Success(
-            SelectedAttachment(
-                contentUri = contentUri,
-                fileName = fileName,
-                mimeType = mimeType,
-                sizeBytes = sizeBytes
-            )
-        )
     }
 
     override suspend fun sendMessage(
         conversationId: String,
         content: String,
-        attachment: SelectedAttachment?
+        localMessageId: String?
     ): ApiResult<Unit> {
-        val localMessageId = UUID.randomUUID().toString()
-        messageDao.insert(
-            MessageEntity(
-                id = localMessageId,
-                conversationId = conversationId,
-                sender = "USER",
-                content = content,
-                createdAt = System.currentTimeMillis(),
-                syncState = "PENDING"
-            )
-        )
-        attachment?.let { selected ->
-            attachmentDao.insert(
-                AttachmentEntity(
-                    id = UUID.randomUUID().toString(),
-                    messageId = localMessageId,
-                    contentUri = selected.contentUri,
-                    fileName = selected.fileName,
-                    mimeType = selected.mimeType,
-                    sizeBytes = selected.sizeBytes
+        val queuedMessageId = localMessageId ?: UUID.randomUUID().toString()
+        val stagedAttachments =
+            pendingAttachmentDao.findForLocalMessage(queuedMessageId)
+        database.withTransaction {
+            messageDao.insert(
+                MessageEntity(
+                    id = queuedMessageId,
+                    conversationId = conversationId,
+                    sender = "USER",
+                    content = content,
+                    createdAt = clock(),
+                    syncState = MessageDeliveryState.PENDING
                 )
             )
+            stagedAttachments.forEach { selected ->
+                attachmentDao.insert(
+                    AttachmentEntity(
+                        id = selected.id,
+                        messageId = queuedMessageId,
+                        contentUri = null,
+                        localFilePath = selected.localFilePath,
+                        fileName = selected.fileName,
+                        mimeType = selected.mimeType,
+                        sizeBytes = selected.sizeBytes,
+                        contentHash = selected.contentHash,
+                        syncState = AttachmentUploadState.PENDING_UPLOAD
+                    )
+                )
+            }
+            pendingAttachmentDao.deleteForLocalMessage(queuedMessageId)
         }
-        return sendPendingMessage(localMessageId)
-    }
-
-    override suspend fun sendAiMessage(message: String): ApiResult<String> {
-        return when (val result = apiRequest { api.chat(ChatRequest(message)) }) {
-            is ApiResult.Success -> ApiResult.Success(result.value.reply)
-            is ApiResult.Error -> result
-        }
+        return sendPendingMessage(queuedMessageId)
     }
 
     override suspend fun retryMessage(messageId: String): ApiResult<Unit> {
         val message = messageDao.findById(messageId)
             ?: return ApiResult.Error("The pending message no longer exists.")
-        if (message.sender != "USER" || message.syncState == "SYNCED") {
+        if (message.sender != "USER" || message.syncState == MessageDeliveryState.SENT) {
             return ApiResult.Success(Unit)
         }
-        messageDao.update(message.copy(syncState = "PENDING", lastError = null))
+        if (message.syncState == MessageDeliveryState.FAILED_PERMANENT) {
+            return ApiResult.Error(
+                message = message.lastError ?: "This message cannot be retried automatically.",
+                retryable = false
+            )
+        }
         return sendPendingMessage(messageId)
     }
 
-    override suspend fun retryAllPendingMessages(): Boolean {
-        return messageDao.findPendingUserMessages().all { pending ->
-            retryMessage(pending.id) is ApiResult.Success
+    override suspend fun retryAllPendingMessages(): PendingQueueResult {
+        val now = clock()
+        messageDao.recoverStaleSending(
+            staleBefore = now - STALE_SENDING_TIMEOUT_MILLIS,
+            now = now,
+            recoveryMessage = "The previous send was interrupted and will be retried."
+        )
+        attachmentDao.recoverStaleUploads(
+            staleBefore = now - STALE_SENDING_TIMEOUT_MILLIS
+        )
+        val pendingMessages = messageDao.findEligibleUserMessages(now)
+        for (pending in pendingMessages) {
+            if (messageDao.claimForSending(pending.id, clock()) == 1) {
+                messageDao.findById(pending.id)?.let { claimed ->
+                    sendClaimedMessage(claimed)
+                }
+            }
         }
+        return PendingQueueResult(
+            retryableWorkRemaining = messageDao.countRetryableUserMessages() > 0
+        )
     }
 
     override suspend fun deleteConversation(conversationId: String): ApiResult<Unit> {
         return when (val result = apiUnitRequest { api.deleteConversation(conversationId) }) {
             is ApiResult.Success -> {
-                conversationDao.deleteById(conversationId)
+                deleteLocalConversation(conversationId)
                 result
             }
             is ApiResult.Error -> {
                 if (result.statusCode == 404) {
-                    conversationDao.deleteById(conversationId)
+                    deleteLocalConversation(conversationId)
                     ApiResult.Success(Unit)
                 } else {
                     result
@@ -239,110 +304,283 @@ class DefaultChatRepository(
     }
 
     override suspend fun clearLocalData() {
+        val localFiles = attachmentDao.findLocalFilePaths() +
+            pendingAttachmentDao.findAll().map { it.localFilePath }
         conversationDao.clearAll()
+        pendingAttachmentDao.clearAll()
+        localFiles.forEach(attachmentFileStore::delete)
+    }
+
+    private suspend fun deleteLocalConversation(conversationId: String) {
+        val files = attachmentDao.findLocalFilePathsForConversation(conversationId)
+        val staged = pendingAttachmentDao.findForConversation(conversationId)
+        conversationDao.deleteById(conversationId)
+        staged.forEach { pendingAttachmentDao.deleteById(it.id) }
+        (files + staged.map { it.localFilePath })
+            .forEach(attachmentFileStore::delete)
     }
 
     private suspend fun sendPendingMessage(localMessageId: String): ApiResult<Unit> {
+        val existing = messageDao.findById(localMessageId)
+            ?: return ApiResult.Error("The pending message no longer exists.")
+        if (existing.syncState == MessageDeliveryState.SENT) {
+            return ApiResult.Success(Unit)
+        }
+        if (messageDao.claimForSending(localMessageId, clock()) != 1) {
+            val current = messageDao.findById(localMessageId)
+                ?: return ApiResult.Error("The pending message no longer exists.")
+            if (current.syncState != MessageDeliveryState.FAILED_PERMANENT) {
+                onSyncNeeded()
+                return ApiResult.Success(Unit)
+            }
+            return ApiResult.Error(
+                message = current.lastError ?: "This message cannot be retried automatically.",
+                retryable = false
+            )
+        }
         val localMessage = messageDao.findById(localMessageId)
             ?: return ApiResult.Error("The pending message no longer exists.")
+        return sendClaimedMessage(localMessage)
+    }
+
+    private suspend fun sendClaimedMessage(localMessage: MessageEntity): ApiResult<Unit> {
+        val uploadedAttachmentIds = when (
+            val uploadResult = uploadRequiredAttachments(localMessage.id)
+        ) {
+            is ApiResult.Success -> uploadResult.value
+            is ApiResult.Error -> {
+                return recordSendFailure(localMessage.id, uploadResult)
+            }
+        }
         return when (
             val result = apiRequest {
                 api.sendMessage(
                     localMessage.conversationId,
-                    SendMessageRequest(localMessage.content)
+                    localMessage.id,
+                    SendMessageRequest(
+                        content = localMessage.content,
+                        attachmentIds = uploadedAttachmentIds
+                    )
                 )
             }
         ) {
             is ApiResult.Success -> completeExchange(localMessage, result.value)
             is ApiResult.Error -> {
-                messageDao.update(
-                    localMessage.copy(syncState = "FAILED", lastError = result.message)
-                )
-                onSyncNeeded()
-                result
+                recordSendFailure(localMessage.id, result)
             }
         }
+    }
+
+    private suspend fun recordSendFailure(
+        messageId: String,
+        error: ApiResult.Error
+    ): ApiResult.Error {
+        val retryable = when {
+            error.code == "AI_QUOTA_EXCEEDED" -> false
+            error.code == "AI_REQUEST_IN_PROGRESS" -> true
+            error.code in RETRYABLE_AI_CODES -> true
+            error.statusCode == 401 -> false
+            error.retryable != null -> error.retryable
+            error.statusCode != null && error.statusCode in 400..499 -> false
+            else -> true
+        }
+        val displayMessage = when (error.code) {
+            "AI_QUOTA_EXCEEDED" -> "AI service quota is unavailable. Please try again later."
+            else -> error.message
+        }
+        if (retryable) {
+            val delay = when {
+                error.code == "AI_REQUEST_IN_PROGRESS" -> IN_PROGRESS_RETRY_DELAY_MILLIS
+                error.retryAfterMillis != null -> error.retryAfterMillis
+                else -> DEFAULT_RETRY_DELAY_MILLIS
+            }.coerceAtLeast(DEFAULT_RETRY_DELAY_MILLIS)
+            messageDao.markRetryableFailure(
+                messageId = messageId,
+                message = displayMessage,
+                nextAttemptAt = clock() + delay
+            )
+            onSyncNeeded()
+        } else {
+            messageDao.markPermanentFailure(messageId, displayMessage)
+        }
+        return error.copy(message = displayMessage, retryable = retryable)
     }
 
     private suspend fun completeExchange(
         localMessage: MessageEntity,
         exchange: SendMessageData
     ): ApiResult<Unit> {
-        val localAttachments = attachmentDao.findForMessage(localMessage.id)
-        database.withTransaction {
-            saveRemoteMessage(exchange.userMessage)
-            if (localAttachments.isNotEmpty()) {
-                attachmentDao.moveToMessage(localMessage.id, exchange.userMessage.id)
+        val completed = database.withTransaction {
+            if (
+                messageDao.markSent(
+                    messageId = localMessage.id,
+                    backendMessageId = exchange.userMessage.id,
+                    content = exchange.userMessage.content
+                ) != 1
+            ) {
+                return@withTransaction false
             }
-            messageDao.deleteById(localMessage.id)
             saveRemoteMessage(exchange.assistantMessage)
             conversationDao.findById(localMessage.conversationId)?.let { conversation ->
-                conversationDao.update(conversation.copy(updatedAt = System.currentTimeMillis()))
+                val assistantCreatedAt = parseTimestamp(exchange.assistantMessage.createdAt)
+                conversationDao.update(
+                    conversation.copy(updatedAt = maxOf(conversation.updatedAt, assistantCreatedAt))
+                )
             }
+            true
+        }
+        if (!completed) {
+            return ApiResult.Error(
+                message = "The message result could not be saved locally.",
+                retryable = true
+            )
         }
 
-        val failedUpload = localAttachments.firstOrNull { attachment ->
-            uploadAttachment(exchange.userMessage.id, attachment) is ApiResult.Error
+        return ApiResult.Success(Unit)
+    }
+
+    private suspend fun uploadRequiredAttachments(
+        messageId: String
+    ): ApiResult<List<String>> {
+        val attachments = attachmentDao.findForMessage(messageId)
+        val backendIds = mutableListOf<String>()
+        for (attachment in attachments) {
+            if (attachment.syncState == AttachmentUploadState.UPLOADED) {
+                attachment.backendAttachmentId?.let(backendIds::add)
+                    ?: return ApiResult.Error(
+                        "An uploaded attachment is missing its server ID.",
+                        retryable = true
+                    )
+                continue
+            }
+            if (attachment.syncState == AttachmentUploadState.FAILED_PERMANENT) {
+                return ApiResult.Error(
+                    attachment.failureReason ?: "This image cannot be uploaded.",
+                    retryable = false
+                )
+            }
+            if (attachmentDao.claimUpload(attachment.id, clock()) != 1) {
+                return ApiResult.Error(
+                    "An attachment upload is already in progress.",
+                    code = "ATTACHMENT_UPLOAD_IN_PROGRESS",
+                    retryable = true
+                )
+            }
+            when (val result = uploadAttachment(attachment)) {
+                is ApiResult.Success -> backendIds += result.value
+                is ApiResult.Error -> return result
+            }
         }
-        return if (failedUpload == null) {
-            ApiResult.Success(Unit)
-        } else {
-            ApiResult.Error("The message was sent, but its image could not be uploaded.")
-        }
+        return ApiResult.Success(backendIds)
     }
 
     private suspend fun uploadAttachment(
-        messageId: String,
         attachment: AttachmentEntity
-    ): ApiResult<Unit> {
-        val uri = attachment.contentUri?.toUri()
-            ?: return ApiResult.Error("The selected image is no longer available.")
-        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: return ApiResult.Error("The selected image is no longer available.")
+    ): ApiResult<String> {
+        val file = attachment.localFilePath?.let(::File)
+        if (file == null || !file.isFile) {
+            val error = ApiResult.Error(
+                "The selected image is no longer available.",
+                retryable = false
+            )
+            attachmentDao.markFailed(
+                attachment.id,
+                AttachmentUploadState.FAILED_PERMANENT,
+                error.message
+            )
+            return error
+        }
+        val bytes = file.readBytes()
         val requestBody = bytes.toRequestBody(attachment.mimeType.toMediaTypeOrNull())
         val part = MultipartBody.Part.createFormData("file", attachment.fileName, requestBody)
-        return when (val result = apiRequest { api.uploadAttachment(messageId, part) }) {
+        return when (
+            val result = apiRequest {
+                api.uploadAttachment(attachment.id, part)
+            }
+        ) {
             is ApiResult.Success -> {
-                attachmentDao.markUploaded(attachment.id, result.value.fileUrl)
-                ApiResult.Success(Unit)
+                attachmentDao.markUploaded(
+                    attachment.id,
+                    result.value.id,
+                    result.value.fileUrl
+                )
+                attachmentFileStore.delete(attachment.localFilePath)
+                ApiResult.Success(result.value.id)
             }
             is ApiResult.Error -> {
-                attachmentDao.markFailed(attachment.id)
-                result
+                val retryable = when {
+                    result.retryable != null -> result.retryable
+                    result.statusCode != null && result.statusCode in 400..499 -> false
+                    else -> true
+                }
+                attachmentDao.markFailed(
+                    attachment.id,
+                    if (retryable) {
+                        AttachmentUploadState.FAILED_RETRYABLE
+                    } else {
+                        AttachmentUploadState.FAILED_PERMANENT
+                    },
+                    result.message
+                )
+                result.copy(retryable = retryable)
             }
         }
     }
 
     private suspend fun saveRemoteMessage(message: MessageDto) {
+        val linkedLocal = messageDao.findByBackendMessageId(message.id)
+        val existing = linkedLocal ?: messageDao.findById(message.id)
+        val localMessageId = linkedLocal?.id ?: message.id
         messageDao.insert(
             MessageEntity(
-                id = message.id,
+                id = localMessageId,
                 conversationId = message.conversationId,
                 sender = message.sender,
                 content = message.content,
-                createdAt = parseTimestamp(message.createdAt),
-                syncState = "SYNCED"
+                createdAt = existing?.createdAt ?: parseTimestamp(message.createdAt),
+                syncState = MessageDeliveryState.SENT,
+                backendMessageId = linkedLocal?.backendMessageId
             )
         )
         if (message.attachments.isNotEmpty()) {
-            attachmentDao.insertAll(message.attachments.map(::remoteAttachmentEntity))
+            attachmentDao.insertAll(
+                message.attachments.map { attachment ->
+                    val linkedAttachment =
+                        attachmentDao.findByBackendId(attachment.id)
+                    remoteAttachmentEntity(
+                        attachment,
+                        localMessageId,
+                        linkedAttachment
+                    )
+                }
+            )
         }
     }
 
-    private fun remoteAttachmentEntity(attachment: AttachmentDto): AttachmentEntity =
+    private fun remoteAttachmentEntity(
+        attachment: AttachmentDto,
+        localMessageId: String,
+        existing: AttachmentEntity? = null
+    ): AttachmentEntity =
         AttachmentEntity(
-            id = attachment.id,
-            messageId = attachment.messageId,
+            id = existing?.id ?: attachment.id,
+            messageId = localMessageId,
             contentUri = null,
+            localFilePath = existing?.localFilePath,
             fileName = attachment.fileName,
             mimeType = attachment.mimeType,
             sizeBytes = attachment.sizeBytes,
             backendUrl = attachment.fileUrl,
-            syncState = "SYNCED",
-            createdAt = parseTimestamp(attachment.createdAt)
+            backendAttachmentId = attachment.id,
+            syncState = AttachmentUploadState.UPLOADED,
+            createdAt = existing?.createdAt ?: parseTimestamp(attachment.createdAt)
         )
 
     private fun parseTimestamp(value: String): Long {
+        return parseTimestampOrNull(value) ?: System.currentTimeMillis()
+    }
+
+    private fun parseTimestampOrNull(value: String): Long? {
         val patterns = listOf(
             "yyyy-MM-dd'T'HH:mm:ss.SSSX",
             "yyyy-MM-dd'T'HH:mm:ssX"
@@ -353,6 +591,18 @@ class DefaultChatRepository(
                     timeZone = TimeZone.getTimeZone("UTC")
                 }.parse(value)?.time
             }.getOrNull()
-        } ?: System.currentTimeMillis()
+        }
+    }
+
+    private companion object {
+        const val STALE_SENDING_TIMEOUT_MILLIS = 5 * 60 * 1_000L
+        const val DEFAULT_RETRY_DELAY_MILLIS = 10_000L
+        const val IN_PROGRESS_RETRY_DELAY_MILLIS = 10_000L
+
+        val RETRYABLE_AI_CODES = setOf(
+            "AI_RATE_LIMITED",
+            "AI_PROVIDER_TIMEOUT",
+            "AI_PROVIDER_UNAVAILABLE"
+        )
     }
 }

@@ -16,10 +16,11 @@ class ConversationSyncWorker(
         if (application.settingsRepository.accessToken.first().isNullOrBlank()) {
             return Result.success()
         }
-        return if (application.chatRepository.retryAllPendingMessages()) {
-            Result.success()
-        } else {
+        val queueResult = application.chatRepository.retryAllPendingMessages()
+        return if (queueResult.retryableWorkRemaining) {
             Result.retry()
+        } else {
+            Result.success()
         }
     }
 }

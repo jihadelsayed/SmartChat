@@ -15,6 +15,7 @@ import com.smartchat.feature.chat.ChatMessage
 @Composable
 fun ChatMessageList(
     messages: List<ChatMessage>,
+    onRetry: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -27,6 +28,8 @@ fun ChatMessageList(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (messages.isEmpty()) item { Text("Start a conversation with SmartChat.") }
-        items(messages, key = { it.id }) { message -> MessageBubble(message) }
+        items(messages, key = { it.id }) { message ->
+            MessageBubble(message = message, onRetry = onRetry)
+        }
     }
 }

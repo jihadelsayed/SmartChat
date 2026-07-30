@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -15,9 +14,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun MessageInput(
     value: String,
+    hasAttachments: Boolean,
     isSending: Boolean,
     onValueChange: (String) -> Unit,
-    onPickImage: () -> Unit,
+    onPickImages: () -> Unit,
     onSend: () -> Unit
 ) {
     Row(
@@ -25,7 +25,6 @@ fun MessageInput(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        OutlinedButton(onClick = onPickImage, enabled = !isSending) { Text("Image") }
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
@@ -34,6 +33,10 @@ fun MessageInput(
             enabled = !isSending,
             maxLines = 4
         )
-        Button(onClick = onSend, enabled = value.isNotBlank() && !isSending) { Text("Send") }
+        Button(onClick = onPickImages, enabled = !isSending) { Text("Image") }
+        Button(
+            onClick = onSend,
+            enabled = (value.isNotBlank() || hasAttachments) && !isSending
+        ) { Text("Send") }
     }
 }

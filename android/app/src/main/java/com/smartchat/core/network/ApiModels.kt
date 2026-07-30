@@ -9,7 +9,9 @@ data class ApiEnvelope<T>(
 data class ApiError(
     val code: String,
     val message: String,
-    val details: Any? = null
+    val details: Any? = null,
+    val retryable: Boolean? = null,
+    val requestId: String? = null
 )
 
 data class HealthData(
@@ -42,12 +44,11 @@ data class AuthData(
     val user: PublicUser
 )
 
-data class ChatRequest(val message: String)
-
-data class ChatData(val reply: String)
-
 data class CreateConversationRequest(val title: String? = null)
-data class SendMessageRequest(val content: String)
+data class SendMessageRequest(
+    val content: String,
+    val attachmentIds: List<String> = emptyList()
+)
 
 data class ConversationSummaryDto(
     val id: String,
@@ -78,7 +79,7 @@ data class MessageDto(
 
 data class AttachmentDto(
     val id: String,
-    val messageId: String,
+    val messageId: String?,
     val fileName: String,
     val mimeType: String,
     val fileUrl: String,
@@ -93,5 +94,12 @@ data class SendMessageData(
 
 sealed interface ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>
-    data class Error(val message: String, val statusCode: Int? = null) : ApiResult<Nothing>
+    data class Error(
+        val message: String,
+        val statusCode: Int? = null,
+        val code: String? = null,
+        val retryable: Boolean? = null,
+        val requestId: String? = null,
+        val retryAfterMillis: Long? = null
+    ) : ApiResult<Nothing>
 }

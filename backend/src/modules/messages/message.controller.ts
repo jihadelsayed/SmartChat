@@ -13,10 +13,16 @@ export const messageController = {
   },
 
   async create(request: Request, response: Response) {
+    const idempotencyKey = (
+      request.header("idempotency-key") ??
+      request.body.clientRequestId
+    )?.toLowerCase();
     const result = await messageService.send(
       String(request.params.conversationId),
       request.authenticatedUser!.id,
-      request.body.content
+      request.body.content,
+      idempotencyKey,
+      request.body.attachmentIds
     );
 
     response.status(201).json(successResponse(result));

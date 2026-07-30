@@ -5,7 +5,8 @@ import { validate } from "../middleware/validation.middleware";
 import { attachmentController } from "../modules/attachments/attachment.controller";
 import {
   attachmentIdSchema,
-  messageAttachmentSchema
+  messageAttachmentSchema,
+  stagedAttachmentSchema
 } from "../modules/attachments/attachment.validation";
 import { asyncHandler } from "../shared/utils/async-handler";
 
@@ -31,6 +32,13 @@ messageAttachmentRouter.post(
 export const attachmentRouter = Router();
 
 attachmentRouter.use(requireAuthentication);
+
+attachmentRouter.post(
+  "/",
+  validate(stagedAttachmentSchema),
+  uploadAttachment,
+  asyncHandler(attachmentController.uploadStaged)
+);
 
 attachmentRouter.get(
   "/:attachmentId",

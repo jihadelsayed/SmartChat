@@ -1,126 +1,92 @@
-import { AI_REQUEST_TIMEOUT_MS } from "../ai.constants";
+import OpenAI from "openai";
+import {
+  AI_MAXIMUM_RETRIES,
+  AI_REQUEST_TIMEOUT_MS
+} from "../ai.constants";
+import {
+  AiConfigurationError,
+  AiEmptyResponseError,
+  AiImageInputUnsupportedError
+} from "../ai.errors";
+import type { AiProviderRequest } from "../ai.types";
 import type { AiProvider } from "./ai-provider.interface";
+import { mapOpenAiError } from "./openai-error.mapper";
 
-interface OpenAiTextContent {
-  type?: string;
-  text?: string;
-}
+const SMARTCHAT_INSTRUCTIONS =
+  "You are SmartChat, a concise and helpful AI assistant.";
 
-interface OpenAiOutputItem {
-  type?: string;
-  content?: OpenAiTextContent[];
-}
-
-interface OpenAiErrorResponse {
-  error?: {
-    message?: string;
-  };
-}
-
-interface OpenAiResponse extends OpenAiErrorResponse {
-  output_text?: string;
-  output?: OpenAiOutputItem[];
-}
-
-function extractOutputText(response: OpenAiResponse): string | null {
-  if (
-    typeof response.output_text === "string" &&
-    response.output_text.trim()
-  ) {
-    return response.output_text.trim();
-  }
-
-  for (const outputItem of response.output ?? []) {
-    for (const contentItem of outputItem.content ?? []) {
-      if (
-        contentItem.type === "output_text" &&
-        typeof contentItem.text === "string" &&
-        contentItem.text.trim()
-      ) {
-        return contentItem.text.trim();
-      }
-    }
-  }
-
-  return null;
-}
+type OpenAiClient = Pick<OpenAI, "responses">;
 
 export class OpenAiProvider implements AiProvider {
-  private readonly apiKey: string | undefined;
-  private readonly model: string;
+  readonly supportsImages = true;
+  private readonly client: OpenAiClient;
 
   constructor(
-    apiKey = process.env.OPENAI_API_KEY,
-    model = process.env.OPENAI_MODEL ?? "gpt-5.6"
+    private readonly apiKey: string,
+    private readonly model: string,
+    client?: OpenAiClient
   ) {
-    this.apiKey = apiKey;
-    this.model = model;
-  }
-
-  async generateReply(input: { message: string }): Promise<string> {
-    if (!this.apiKey) {
-      throw new Error(
-        "OPENAI_API_KEY is not configured. Use the mock provider or add the key to backend/.env."
-      );
+    if (!apiKey.trim() || !model.trim()) {
+      throw new AiConfigurationError();
     }
 
-    const abortController = new AbortController();
+    this.client =
+      client ??
+      new OpenAI({
+        apiKey,
+        timeout: AI_REQUEST_TIMEOUT_MS,
+        maxRetries: AI_MAXIMUM_RETRIES
+      });
+  }
 
-    const timeout = setTimeout(() => {
-      abortController.abort();
-    }, AI_REQUEST_TIMEOUT_MS);
-
+  async generateReply(input: AiProviderRequest): Promise<string> {
     try {
-      const response = await fetch(
-        "https://api.openai.com/v1/responses",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: this.model,
-            instructions:
-              "You are SmartChat, a concise and helpful AI assistant.",
-            input: input.message
-          }),
-          signal: abortController.signal
-        }
-      );
-
-      const responseBody =
-        (await response.json()) as OpenAiResponse;
-
-      if (!response.ok) {
-        throw new Error(
-          responseBody.error?.message ??
-            `OpenAI request failed with status ${response.status}`
-        );
-      }
-
-      const generatedText = extractOutputText(responseBody);
+      const responseInput = input.images?.length
+        ? input.messages.map((message, index) => {
+            if (index !== input.messages.length - 1) {
+              return message;
+            }
+            return {
+              role: "user" as const,
+              content: [
+                {
+                  type: "input_text" as const,
+                  text: message.content || "Please analyze the attached image."
+                },
+                ...input.images!.map((image) => ({
+                  type: "input_image" as const,
+                  image_url: `data:${image.mimeType};base64,${image.dataBase64}`,
+                  detail: "auto" as const
+                }))
+              ]
+            };
+          })
+        : input.messages;
+      const response = await this.client.responses.create({
+        model: this.model,
+        instructions: input.systemPrompt ?? SMARTCHAT_INSTRUCTIONS,
+        input: responseInput
+      });
+      const generatedText = response.output_text.trim();
 
       if (!generatedText) {
-        throw new Error(
-          "OpenAI returned a response without generated text"
-        );
+        throw new AiEmptyResponseError();
       }
 
       return generatedText;
     } catch (error: unknown) {
-      if (
-        error instanceof Error &&
-        error.name === "AbortError"
-      ) {
-        throw new Error(
-          `OpenAI request timed out after ${AI_REQUEST_TIMEOUT_MS} ms`
-        );
+      if (error instanceof AiEmptyResponseError) {
+        throw error;
       }
 
-      throw error;
-    } finally {
-      clearTimeout(timeout);
+      const mappedError = mapOpenAiError(error, this.apiKey);
+      if (
+        input.images?.length &&
+        mappedError.code === "AI_PROVIDER_REQUEST_FAILED"
+      ) {
+        throw new AiImageInputUnsupportedError();
+      }
+      throw mappedError;
     }
   }
 }

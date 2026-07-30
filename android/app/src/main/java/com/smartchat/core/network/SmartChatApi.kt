@@ -4,6 +4,7 @@ import retrofit2.http.Body
 import retrofit2.Response
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.Part
 import retrofit2.http.Path
@@ -46,16 +47,15 @@ interface SmartChatApi : AuthApi {
     @POST("api/v1/conversations/{conversationId}/messages")
     suspend fun sendMessage(
         @Path("conversationId") conversationId: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
         @Body request: SendMessageRequest
     ): Response<ApiEnvelope<SendMessageData>>
 
     @Multipart
-    @POST("api/v1/messages/{messageId}/attachments")
+    @POST("api/v1/attachments")
     suspend fun uploadAttachment(
-        @Path("messageId") messageId: String,
+        @Header("X-Client-Attachment-Id") clientAttachmentId: String,
         @Part file: MultipartBody.Part
     ): Response<ApiEnvelope<AttachmentDto>>
 
-    @POST("api/v1/ai/chat")
-    suspend fun chat(@Body request: ChatRequest): Response<ApiEnvelope<ChatData>>
 }

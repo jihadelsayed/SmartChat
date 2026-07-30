@@ -10,6 +10,8 @@ export interface ApiEnvelope<T> {
     code: string;
     message: string;
     details?: unknown;
+    retryable?: boolean;
+    requestId?: string;
   };
 }
 

@@ -10,6 +10,7 @@ export function requestLogger(
   const requestId = request.header("x-request-id") ?? randomUUID();
   const startedAt = performance.now();
 
+  request.requestId = requestId;
   response.setHeader("x-request-id", requestId);
 
   response.on("finish", () => {

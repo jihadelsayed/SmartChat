@@ -1,9 +1,11 @@
 export interface CreateAttachmentInput {
-  messageId: string;
+  messageId?: string;
+  clientAttachmentId: string;
   fileName: string;
   mimeType: string;
   fileUrl: string;
   sizeBytes: number;
+  contentHash: string;
 }
 
 export interface StoredAttachmentFile {

@@ -16,7 +16,10 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("conversationId")]
+    indices = [
+        Index("conversationId"),
+        Index(value = ["backendMessageId"], unique = true)
+    ]
 )
 data class MessageEntity(
     @PrimaryKey val id: String,
@@ -25,6 +28,9 @@ data class MessageEntity(
     val content: String,
     val createdAt: Long,
     @ColumnInfo(defaultValue = "'SYNCED'")
-    val syncState: String = "SYNCED",
-    val lastError: String? = null
+    val syncState: String = MessageDeliveryState.SENT,
+    val lastError: String? = null,
+    val attemptStartedAt: Long? = null,
+    val nextAttemptAt: Long? = null,
+    val backendMessageId: String? = null
 )

@@ -1,3 +1,6 @@
+import type { AiProviderRequest } from "../ai.types";
+
 export interface AiProvider {
-  generateReply(input: { message: string }): Promise<string>;
+  readonly supportsImages?: boolean;
+  generateReply(input: AiProviderRequest): Promise<string>;
 }

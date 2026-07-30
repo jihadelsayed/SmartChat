@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.room.Room
 import com.smartchat.core.database.SmartChatDatabase
 import com.smartchat.core.database.MIGRATION_1_2
+import com.smartchat.core.database.MIGRATION_2_3
+import com.smartchat.core.database.MIGRATION_3_4
 import com.smartchat.core.datastore.SettingsRepository
 import com.smartchat.core.network.NetworkClient
 import com.smartchat.data.DefaultChatRepository
@@ -17,7 +19,7 @@ class SmartChatApplication : Application() {
             applicationContext,
             SmartChatDatabase::class.java,
             "smartchat.db"
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 
     val settingsRepository: SettingsRepository by lazy {
@@ -29,7 +31,11 @@ class SmartChatApplication : Application() {
     }
 
     val authRepository by lazy {
-        AuthRepositoryImpl(api, settingsRepository)
+        AuthRepositoryImpl(
+            api = api,
+            sessionStore = settingsRepository,
+            onAuthenticated = chatRepository::clearLocalData
+        )
     }
 
     val profileRepository by lazy {
@@ -41,6 +47,7 @@ class SmartChatApplication : Application() {
             database = database,
             api = api,
             contentResolver = contentResolver,
+            filesDirectory = filesDir,
             onSyncNeeded = { WorkScheduler.enqueuePendingSync(applicationContext) }
         )
     }
@@ -48,5 +55,6 @@ class SmartChatApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         WorkScheduler.schedulePeriodicSync(this)
+        WorkScheduler.enqueuePendingSync(this)
     }
 }

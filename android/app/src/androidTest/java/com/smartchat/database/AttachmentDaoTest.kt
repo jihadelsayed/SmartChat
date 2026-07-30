@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.smartchat.core.database.SmartChatDatabase
 import com.smartchat.core.database.entity.AttachmentEntity
+import com.smartchat.core.database.entity.AttachmentUploadState
 import com.smartchat.core.database.entity.ConversationEntity
 import com.smartchat.core.database.entity.MessageEntity
 import kotlinx.coroutines.flow.first
@@ -33,7 +34,7 @@ class AttachmentDaoTest {
 
     @Test
     fun attachmentMetadataIsStoredWithoutBinaryData() = runBlocking {
-        database.conversationDao().insert(ConversationEntity("conversation", "Title", 1L, 1L))
+        database.conversationDao().upsert(ConversationEntity("conversation", "Title", 1L, 1L))
         database.messageDao().insert(MessageEntity("message", "conversation", "USER", "Image", 2L))
         val attachment = AttachmentEntity(
             id = "attachment",
@@ -47,5 +48,39 @@ class AttachmentDaoTest {
         database.attachmentDao().insert(attachment)
 
         assertEquals(listOf(attachment), database.attachmentDao().observeForMessage("message").first())
+    }
+
+    @Test
+    fun uploadClaimAndStaleRecoveryAreAtomic() = runBlocking {
+        insertMessage()
+        database.attachmentDao().insert(
+            AttachmentEntity(
+                id = "attachment",
+                messageId = "message",
+                contentUri = null,
+                localFilePath = "/owned/image",
+                fileName = "image.png",
+                mimeType = "image/png",
+                sizeBytes = 8,
+                syncState = AttachmentUploadState.PENDING_UPLOAD
+            )
+        )
+
+        assertEquals(1, database.attachmentDao().claimUpload("attachment", 100L))
+        assertEquals(0, database.attachmentDao().claimUpload("attachment", 100L))
+        assertEquals(1, database.attachmentDao().recoverStaleUploads(100L))
+        assertEquals(
+            AttachmentUploadState.FAILED_RETRYABLE,
+            database.attachmentDao().findForMessage("message").single().syncState
+        )
+    }
+
+    private suspend fun insertMessage() {
+        database.conversationDao().upsert(
+            ConversationEntity("conversation", "Title", 1L, 1L)
+        )
+        database.messageDao().insert(
+            MessageEntity("message", "conversation", "USER", "Image", 2L)
+        )
     }
 }
