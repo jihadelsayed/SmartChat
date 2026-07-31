@@ -4,13 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.smartchat.core.network.ApiResult
-import com.smartchat.BuildConfig
 import com.smartchat.data.ChatRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ChatViewModel(
     initialConversationId: String?,
@@ -21,10 +21,8 @@ class ChatViewModel(
     )
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
     private var messagesJob: Job? = null
-    private var selectedAttachmentsJob: Job? = null
 
     init {
-        observeSelectedAttachments(initialConversationId ?: NEW_CHAT_KEY)
         initialConversationId?.let { conversationId ->
             observeMessages(conversationId)
             viewModelScope.launch {
@@ -39,136 +37,115 @@ class ChatViewModel(
         }
     }
 
-    fun selectImages(contentUris: List<String>) {
-        if (contentUris.isEmpty()) return
-        viewModelScope.launch {
-            when (
-                val result = chatRepository.selectAttachments(
-                    _state.value.conversationId ?: NEW_CHAT_KEY,
-                    contentUris
-                )
-            ) {
-                is ApiResult.Success -> Unit
-                is ApiResult.Error -> _state.value =
-                    _state.value.copy(errorMessage = result.message)
-            }
-        }
-    }
-
-    fun removeSelectedAttachment(attachmentId: String) {
-        viewModelScope.launch {
-            chatRepository.removeSelectedAttachment(attachmentId)
-        }
-    }
-
     fun updateInput(value: String) {
         _state.value = _state.value.copy(input = value, errorMessage = null)
     }
 
+    fun selectImage(uri: String?) {
+        if (uri == null) return
+        viewModelScope.launch {
+            when (val result = chatRepository.inspectAttachment(uri)) {
+                is ApiResult.Success -> _state.value = _state.value.copy(
+                    selectedAttachment = result.value,
+                    errorMessage = null
+                )
+                is ApiResult.Error -> _state.value = _state.value.copy(errorMessage = result.message)
+            }
+        }
+    }
+
+    fun removeSelectedImage() {
+        _state.value = _state.value.copy(selectedAttachment = null)
+    }
+
     fun send() {
         val content = _state.value.input.trim()
-        val selectedAttachments = _state.value.selectedAttachments
-        if (
-            (content.isEmpty() && selectedAttachments.isEmpty()) ||
-            _state.value.isSending
-        ) return
-        val localMessageId = selectedAttachments.firstOrNull()?.localMessageId
+        val attachment = _state.value.selectedAttachment
+        if ((content.isEmpty() && attachment == null) || _state.value.isSending) return
 
-        _state.value = _state.value.copy(isSending = true, errorMessage = null)
+        val messageText = content.ifBlank { if (attachment != null) "Image" else "" }
+        val conversationTitle = content.ifBlank { if (attachment != null) "Image attachment" else "New conversation" }
+
         viewModelScope.launch {
-            val conversationId = getOrCreateConversation(content) ?: return@launch
+            _state.value = _state.value.copy(isSending = true, errorMessage = null)
 
-            val result = chatRepository.sendMessage(
-                conversationId = conversationId,
-                content = content,
-                localMessageId = localMessageId
+            val userMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                sender = "USER",
+                content = messageText,
+                attachment = attachment
             )
-            observeSelectedAttachments(conversationId)
-            when (result) {
-                is ApiResult.Success -> _state.value = _state.value.copy(
-                    isSending = false,
-                    input = ""
-                )
-                is ApiResult.Error -> _state.value = _state.value.copy(
-                    isSending = false,
-                    input = "",
-                    errorMessage = result.message
-                )
+            val assistantPlaceholder = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                sender = "ASSISTANT",
+                content = ""
+            )
+            _state.value = _state.value.copy(
+                input = "",
+                selectedAttachment = null,
+                messages = _state.value.messages + userMessage + assistantPlaceholder
+            )
+
+            val conversationId = _state.value.conversationId ?: when (val createResult = chatRepository.createConversation(conversationTitle)) {
+                is ApiResult.Success -> createResult.value
+                is ApiResult.Error -> {
+                    _state.value = _state.value.copy(
+                        isSending = false,
+                        errorMessage = createResult.message,
+                        messages = _state.value.messages.dropLast(1) + ChatMessage(
+                            id = assistantPlaceholder.id,
+                            sender = "ASSISTANT",
+                            content = "I couldn’t start a conversation right now."
+                        )
+                    )
+                    return@launch
+                }
+            }
+
+            when (val result = chatRepository.sendMessage(conversationId, messageText, attachment)) {
+                is ApiResult.Success -> {
+                    val assistantReply = if (attachment != null) {
+                        "Image sent successfully."
+                    } else {
+                        "Message sent."
+                    }
+                    _state.value = _state.value.copy(
+                        isSending = false,
+                        conversationId = conversationId,
+                        messages = _state.value.messages.dropLast(1) + ChatMessage(
+                            id = assistantPlaceholder.id,
+                            sender = "ASSISTANT",
+                            content = assistantReply
+                        )
+                    )
+                }
+                is ApiResult.Error -> {
+                    _state.value = _state.value.copy(
+                        isSending = false,
+                        conversationId = conversationId,
+                        errorMessage = result.message,
+                        messages = _state.value.messages.dropLast(1) + ChatMessage(
+                            id = assistantPlaceholder.id,
+                            sender = "ASSISTANT",
+                            content = "I couldn’t send your message right now."
+                        )
+                    )
+                }
             }
         }
     }
 
-    fun retryMessage(messageId: String) {
-        viewModelScope.launch {
-            when (val result = chatRepository.retryMessage(messageId)) {
-                is ApiResult.Success -> Unit
-                is ApiResult.Error -> _state.value = _state.value.copy(
-                    errorMessage = result.message
-                )
-            }
-        }
-    }
-
-    private suspend fun getOrCreateConversation(firstMessage: String): String? {
-        _state.value.conversationId?.let { return it }
-
-        return when (val result = chatRepository.createConversation(firstMessage)) {
-            is ApiResult.Success -> {
-                observeMessages(result.value)
-                _state.value = _state.value.copy(conversationId = result.value)
-                result.value
-            }
-            is ApiResult.Error -> {
-                _state.value = _state.value.copy(
-                    isSending = false,
-                    errorMessage = result.message
-                )
-                null
-            }
-        }
+    fun retryFailedMessage() {
+        if (_state.value.isSending) return
+        _state.value = _state.value.copy(errorMessage = "Retry is not available in the simple chat mode yet.")
     }
 
     private fun observeMessages(conversationId: String) {
         messagesJob?.cancel()
         messagesJob = viewModelScope.launch {
-            chatRepository.observeMessages(conversationId).collect { messages ->
-                _state.value = _state.value.copy(
-                    messages = messages.map { item ->
-                        ChatMessage(
-                            id = item.message.id,
-                            sender = item.message.sender,
-                            content = item.message.content,
-                            attachments = item.attachments.map { attachment ->
-                                ChatAttachment(
-                                    id = attachment.id,
-                                    fileName = attachment.fileName,
-                                    localFilePath = attachment.localFilePath,
-                                    remoteUrl = attachment.backendUrl?.let { url ->
-                                        if (url.startsWith("http")) url
-                                        else BuildConfig.API_BASE_URL.trimEnd('/') + url
-                                    },
-                                    uploadState = attachment.syncState,
-                                    failureReason = attachment.failureReason
-                                )
-                            },
-                            deliveryState = item.message.syncState,
-                            lastError = item.message.lastError
-                        )
-                    }
-                )
+            chatRepository.observeMessages(conversationId).collect { _ ->
+                _state.value = _state.value.copy(isLoading = false)
             }
-        }
-    }
-
-    private fun observeSelectedAttachments(conversationKey: String) {
-        selectedAttachmentsJob?.cancel()
-        selectedAttachmentsJob = viewModelScope.launch {
-            chatRepository.observeSelectedAttachments(conversationKey)
-                .collect { attachments ->
-                    _state.value = _state.value.copy(
-                        selectedAttachments = attachments
-                    )
-                }
         }
     }
 
@@ -179,9 +156,5 @@ class ChatViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             ChatViewModel(conversationId, chatRepository) as T
-    }
-
-    private companion object {
-        const val NEW_CHAT_KEY = "new-chat"
     }
 }

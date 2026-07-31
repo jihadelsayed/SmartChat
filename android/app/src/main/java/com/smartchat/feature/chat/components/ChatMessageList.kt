@@ -19,7 +19,7 @@ fun ChatMessageList(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
     LazyColumn(
