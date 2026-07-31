@@ -49,7 +49,7 @@ fun ChatScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF474747))
+            .background(Color(0xFFAAD2FA))
             .padding(16.dp)
             .testTag("chat_screen")
     ) {
