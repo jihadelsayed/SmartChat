@@ -139,7 +139,10 @@ private fun SessionNavigation(
             }
             composable(AppDestination.Register.route) {
                 val registerViewModel: RegisterViewModel = viewModel(
-                    factory = RegisterViewModel.Factory(authRepository)
+                    factory = RegisterViewModel.Factory(
+                        authRepository,
+                        profileRepository
+                    )
                 )
                 RegisterScreen(
                     viewModel = registerViewModel,

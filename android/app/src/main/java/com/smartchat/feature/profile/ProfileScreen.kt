@@ -22,7 +22,10 @@ import coil.compose.AsyncImage
 import com.smartchat.core.ui.components.ErrorMessage
 import com.smartchat.core.ui.components.LoadingIndicator
 import com.smartchat.repository.ProfileRepository
-
+import com.smartchat.BuildConfig
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 @Composable
 fun ProfileScreen(profileRepository: ProfileRepository) {
     val viewModel: ProfileViewModel = viewModel(factory = ProfileViewModel.Factory(profileRepository))
@@ -44,10 +47,20 @@ fun ProfileScreen(profileRepository: ProfileRepository) {
                 val user = state.user
                 Spacer(Modifier.height(20.dp))
                 user?.profileImageUrl?.let { imageUrl ->
+
+                    val fullImageUrl = if (imageUrl.startsWith("http")) {
+                        imageUrl
+                    } else {
+                        BuildConfig.API_BASE_URL.trimEnd('/') + imageUrl
+                    }
+
                     AsyncImage(
-                        model = imageUrl,
+                        model = fullImageUrl,
                         contentDescription = "Profile image",
-                        modifier = Modifier.size(112.dp)
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(112.dp)
+                            .clip(CircleShape)
                     )
                 }
                 Spacer(Modifier.height(12.dp))

@@ -10,8 +10,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import android.net.Uri
+import com.smartchat.repository.ProfileRepository
 
-class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel() {
+class RegisterViewModel(
+    private val authRepository: AuthRepository,
+    private val profileRepository: ProfileRepository
+) : ViewModel() {
     private val _state = MutableStateFlow(RegisterUiState())
     val state: StateFlow<RegisterUiState> = _state.asStateFlow()
 
@@ -25,6 +30,13 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
 
     fun updatePassword(value: String) {
         _state.value = _state.value.copy(password = value, errorMessage = null)
+    }
+
+    fun updateProfileImage(uri: Uri?) {
+        _state.value = _state.value.copy(
+            profileImageUri = uri,
+            errorMessage = null
+        )
     }
 
     fun register() {
@@ -50,10 +62,30 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
                 )
             ) {
                 is ApiResult.Success -> {
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        authenticationSucceeded = true
-                    )
+                    val imageUri = snapshot.profileImageUri
+
+                    if (imageUri != null) {
+                        when (val uploadResult = profileRepository.uploadProfileImage(imageUri)) {
+                            is ApiResult.Success -> {
+                                _state.value = _state.value.copy(
+                                    isLoading = false,
+                                    authenticationSucceeded = true
+                                )
+                            }
+
+                            is ApiResult.Error -> {
+                                _state.value = _state.value.copy(
+                                    isLoading = false,
+                                    errorMessage = "Account created, but profile picture upload failed: ${uploadResult.message}"
+                                )
+                            }
+                        }
+                    } else {
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            authenticationSucceeded = true
+                        )
+                    }
                 }
                 is ApiResult.Error -> {
                     _state.value = _state.value.copy(
@@ -65,9 +97,16 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
         }
     }
 
-    class Factory(private val repository: AuthRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val authRepository: AuthRepository,
+        private val profileRepository: ProfileRepository
+    ) : ViewModelProvider.Factory {
+
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            RegisterViewModel(repository) as T
+            RegisterViewModel(
+                authRepository,
+                profileRepository
+            ) as T
     }
 }

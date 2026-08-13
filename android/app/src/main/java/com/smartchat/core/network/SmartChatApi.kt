@@ -58,4 +58,12 @@ interface SmartChatApi : AuthApi {
         @Part file: MultipartBody.Part
     ): Response<ApiEnvelope<AttachmentDto>>
 
+    @Multipart
+    @POST("api/v1/users/me/profile-image")
+    suspend fun uploadProfileImage(
+        @Part file: MultipartBody.Part
+    ): Response<ApiEnvelope<PublicUser>>
+
+
+
 }

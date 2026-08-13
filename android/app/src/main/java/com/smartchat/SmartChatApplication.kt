@@ -39,7 +39,10 @@ class SmartChatApplication : Application() {
     }
 
     val profileRepository by lazy {
-        ProfileRepositoryImpl(api)
+        ProfileRepositoryImpl(
+            api = api,
+            contentResolver = contentResolver
+        )
     }
 
     val chatRepository by lazy {
